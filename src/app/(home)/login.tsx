@@ -53,9 +53,15 @@ export default function LoginScreen() {
     if (googleLoading) return;
     setGoogleLoading(true);
     try {
-      const redirectUrl = AuthSession.makeRedirectUri();
+      // 1. Generate standard redirect URI for Expo Go / Simulator
+      const redirectUrl = AuthSession.makeRedirectUri({
+        scheme: "punteats",
+        preferLocalnet: true,
+      });
+
       console.log("EXPO_REDIRECT_URI:", redirectUrl);
 
+      // 2. Request OAuth URL from Supabase
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
@@ -70,21 +76,27 @@ export default function LoginScreen() {
       }
 
       if (data?.url) {
-        const result = await WebBrowser.openAuthSessionAsync(data.url, redirectUrl);
+        // 3. Open session using WebBrowser
+        const result = await WebBrowser.openAuthSessionAsync(data.url, redirectUrl, {
+          showInRecents: true,
+        });
 
         if (result.type === "success" && result.url) {
-          const params = AuthSession.parseParams(
-            result.url.split("#")[1] || result.url.split("?")[1] || ""
-          );
+          // Parse access_token and refresh_token from the callback URL
+          const parsedUrl = new URL(result.url.replace("#", "?"));
+          const access_token = parsedUrl.searchParams.get("access_token");
+          const refresh_token = parsedUrl.searchParams.get("refresh_token");
 
-          if (params.access_token && params.refresh_token) {
+          if (access_token && refresh_token) {
             const { error: sessionError } = await supabase.auth.setSession({
-              access_token: params.access_token,
-              refresh_token: params.refresh_token,
+              access_token,
+              refresh_token,
             });
 
             if (!sessionError) {
               Alert.alert("Success", "Signed in with Google successfully!");
+            } else {
+              Alert.alert("Session Error", sessionError.message);
             }
           }
         }
