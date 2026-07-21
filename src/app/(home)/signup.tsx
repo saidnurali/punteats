@@ -10,21 +10,95 @@ import {
   Platform,
   ScrollView,
   useWindowDimensions,
+  Alert,
+  ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Stack, router } from "expo-router";
-import { AntDesign, FontAwesome } from "@expo/vector-icons";
+import { AntDesign, FontAwesome, Ionicons } from "@expo/vector-icons";
+import * as WebBrowser from "expo-web-browser";
+import * as AuthSession from "expo-auth-session";
+import { supabase } from "../../lib/supabase";
+
+WebBrowser.maybeCompleteAuthSession();
 
 export default function SignupScreen() {
   const [fullName, setFullName] = useState("");
   const [phoneNumber, setPhoneNumber] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const { height } = useWindowDimensions();
   const isSmallScreen = height < 700;
 
-  const handleSignUp = () => {
-    if (fullName.trim().length > 0 && phoneNumber.trim().length > 0) {
-      // TODO: wire up OTP / registration
-      console.log("Sign up:", fullName, "+252" + phoneNumber);
+  const handleSignUp = async () => {
+    if (fullName.trim().length === 0 || phoneNumber.trim().length === 0 || loading) return;
+    const fullPhone = "+252" + phoneNumber.trim();
+    setLoading(true);
+    try {
+      const { error } = await supabase.auth.signInWithOtp({
+        phone: fullPhone,
+        options: {
+          data: {
+            full_name: fullName.trim(),
+          },
+        },
+      });
+      if (error) {
+        Alert.alert("Registration Error", error.message || "Could not send verification code. Please try again.");
+      } else {
+        router.push(`/(home)/otp?phone=${encodeURIComponent(fullPhone)}`);
+      }
+    } catch {
+      Alert.alert("Error", "Something went wrong sending the verification code.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogleLogin = async () => {
+    if (googleLoading) return;
+    setGoogleLoading(true);
+    try {
+      const redirectUrl = AuthSession.makeRedirectUri();
+      console.log("EXPO_REDIRECT_URI:", redirectUrl);
+
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: redirectUrl,
+          skipBrowserRedirect: true,
+        },
+      });
+
+      if (error) {
+        Alert.alert("Google Sign-In Error", error.message);
+        return;
+      }
+
+      if (data?.url) {
+        const result = await WebBrowser.openAuthSessionAsync(data.url, redirectUrl);
+
+        if (result.type === "success" && result.url) {
+          const params = AuthSession.parseParams(
+            result.url.split("#")[1] || result.url.split("?")[1] || ""
+          );
+
+          if (params.access_token && params.refresh_token) {
+            const { error: sessionError } = await supabase.auth.setSession({
+              access_token: params.access_token,
+              refresh_token: params.refresh_token,
+            });
+
+            if (!sessionError) {
+              Alert.alert("Success", "Signed in with Google successfully!");
+            }
+          }
+        }
+      }
+    } catch (err: any) {
+      Alert.alert("Auth Error", err.message || "An unexpected error occurred.");
+    } finally {
+      setGoogleLoading(false);
     }
   };
 
@@ -32,7 +106,7 @@ export default function SignupScreen() {
     router.back();
   };
 
-  const isFormValid = fullName.trim().length > 0 && phoneNumber.trim().length > 0;
+  const isFormValid = fullName.trim().length > 0 && phoneNumber.trim().length > 0 && !loading;
 
   return (
     <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
@@ -122,9 +196,13 @@ export default function SignupScreen() {
             onPress={handleSignUp}
             disabled={!isFormValid}
           >
-            <Text style={styles.continueButtonText} allowFontScaling={true}>
-              Create Account
-            </Text>
+            {loading ? (
+              <ActivityIndicator color="#FFFFFF" size="small" />
+            ) : (
+              <Text style={styles.continueButtonText} allowFontScaling={true}>
+                Create Account
+              </Text>
+            )}
           </TouchableOpacity>
 
           {/* ── Divider ── */}
@@ -137,18 +215,27 @@ export default function SignupScreen() {
           {/* ── Social Auth Buttons ── */}
           <View style={styles.socialRow}>
             {/* Google */}
-            <TouchableOpacity style={styles.socialButton} activeOpacity={0.75}>
-              <AntDesign name="google" size={30} color="#EA4335" />
+            <TouchableOpacity
+              style={styles.socialButton}
+              activeOpacity={0.75}
+              onPress={handleGoogleLogin}
+              disabled={googleLoading}
+            >
+              {googleLoading ? (
+                <ActivityIndicator color="#EA4335" size="small" />
+              ) : (
+                <AntDesign name="google" size={32} color="#EA4335" />
+              )}
             </TouchableOpacity>
 
             {/* Facebook */}
             <TouchableOpacity style={styles.socialButton} activeOpacity={0.75}>
-              <FontAwesome name="facebook" size={30} color="#1877F2" />
+              <FontAwesome name="facebook" size={32} color="#1877F2" />
             </TouchableOpacity>
 
             {/* Apple */}
             <TouchableOpacity style={styles.socialButton} activeOpacity={0.75}>
-              <AntDesign name="apple1" size={30} color="#000000" />
+              <Ionicons name="logo-apple" size={32} color="#000000" />
             </TouchableOpacity>
           </View>
 
@@ -325,20 +412,22 @@ const styles = StyleSheet.create({
     fontWeight: "400",
   },
 
-  // ── Social Buttons ──
+  // ── Social Buttons ── (Perfect Circles like design reference)
   socialRow: {
     flexDirection: "row",
     width: "100%",
-    justifyContent: "space-between",
-    gap: 12,
+    justifyContent: "center",
+    gap: 24,
     marginBottom: 40,
+    marginTop: 4,
   },
   socialButton: {
-    flex: 1,
-    height: 68,
-    backgroundColor: "#F5F5F5",
-    borderRadius: 18,
-    borderWidth: 0,
+    width: 80,
+    height: 80,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 40,
+    borderWidth: 1.5,
+    borderColor: "#DCDCF0",
     justifyContent: "center",
     alignItems: "center",
     shadowColor: "#000",

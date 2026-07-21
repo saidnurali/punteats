@@ -5,12 +5,26 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "punteats",
+    "scheme": ["punteats", "com.googleusercontent.apps.964294676461-l1sggb0f3cuq8ard65ihhskenie7irlb"],
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/expo.icon"
+      "bundleIdentifier": "com.puntland.punteats",
+      "icon": "./assets/images/puntgo_logo.png",
+      "supportsTablet": false,
+      "buildNumber": "1",
+      "infoPlist": {
+        "CFBundleURLTypes": [
+          {
+            "CFBundleURLSchemes": [
+              "com.googleusercontent.apps.964294676461-l1sggb0f3cuq8ard65ihhskenie7irlb"
+            ]
+          }
+        ]
+      }
     },
     "android": {
+      "package": "com.puntland.punteats",
+      "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",

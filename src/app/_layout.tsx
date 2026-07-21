@@ -8,7 +8,14 @@ Sentry.init({
 });
 
 function RootLayout() {
-  return <Stack />;
+  return (
+    <Stack
+      screenOptions={{
+        headerShown: false,
+        animation: "slide_from_right",
+      }}
+    />
+  );
 }
 
 export default Sentry.wrap(RootLayout);
