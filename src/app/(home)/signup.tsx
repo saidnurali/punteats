@@ -59,15 +59,10 @@ export default function SignupScreen() {
     if (googleLoading) return;
     setGoogleLoading(true);
     try {
-      // 1. Generate standard redirect URI for Expo Go / Simulator
-      const redirectUrl = AuthSession.makeRedirectUri({
-        scheme: "punteats",
-        preferLocalnet: true,
-      });
+      // 1. Create redirect URI for Expo Go
+      const redirectUrl = AuthSession.makeRedirectUri();
 
-      console.log("EXPO_REDIRECT_URI:", redirectUrl);
-
-      // 2. Request OAuth URL from Supabase
+      // 2. Fetch OAuth URL from Supabase
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
@@ -81,34 +76,39 @@ export default function SignupScreen() {
         return;
       }
 
-      if (data?.url) {
-        // 3. Open session using WebBrowser
-        const result = await WebBrowser.openAuthSessionAsync(data.url, redirectUrl, {
-          showInRecents: true,
-        });
+      if (!data?.url) {
+        Alert.alert("Error", "Failed to generate sign-in URL.");
+        return;
+      }
 
-        if (result.type === "success" && result.url) {
-          // Parse access_token and refresh_token from the callback URL
-          const parsedUrl = new URL(result.url.replace("#", "?"));
-          const access_token = parsedUrl.searchParams.get("access_token");
-          const refresh_token = parsedUrl.searchParams.get("refresh_token");
+      // 3. Open browser session and handle response
+      const result = await WebBrowser.openAuthSessionAsync(data.url, redirectUrl);
 
-          if (access_token && refresh_token) {
-            const { error: sessionError } = await supabase.auth.setSession({
-              access_token,
-              refresh_token,
-            });
+      if (result.type === "success" && result.url) {
+        // Clean parsing of response hash/query params
+        const rawUrl = result.url;
+        const paramsString = rawUrl.includes("#") ? rawUrl.split("#")[1] : rawUrl.split("?")[1];
+        const params = new URLSearchParams(paramsString || "");
 
-            if (!sessionError) {
-              Alert.alert("Success", "Signed in with Google successfully!");
-            } else {
-              Alert.alert("Session Error", sessionError.message);
-            }
+        const access_token = params.get("access_token");
+        const refresh_token = params.get("refresh_token");
+
+        if (access_token && refresh_token) {
+          const { error: sessionError } = await supabase.auth.setSession({
+            access_token,
+            refresh_token,
+          });
+
+          if (!sessionError) {
+            Alert.alert("Success", "Signed in with Google successfully!");
+            router.replace("/(tabs)");
+          } else {
+            Alert.alert("Session Error", sessionError.message);
           }
         }
       }
     } catch (err: any) {
-      Alert.alert("Auth Error", err.message || "An unexpected error occurred.");
+      Alert.alert("Auth Error", err.message || "An error occurred during sign in.");
     } finally {
       setGoogleLoading(false);
     }
