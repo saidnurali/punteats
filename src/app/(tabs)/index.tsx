@@ -68,10 +68,12 @@ const POPULAR_RESTAURANTS = [
 ];
 
 // wsrv.nl proxies pngimg.com so hotlinking works in React Native
-const HERO_BOWL_IMG = "https://wsrv.nl/?url=pngimg.com/uploads/salad/salad_PNG3691.png&output=png";
 const BURGER_IMG = "https://wsrv.nl/?url=pngimg.com/uploads/burger_sandwich/burger_sandwich_PNG4135.png&output=png";
 const CAR_IMG = "https://wsrv.nl/?url=pngimg.com/uploads/car_sedan/car_sedan_PNG102577.png&output=png";
 const DELIVERY_SCOOTER_IMG = "https://wsrv.nl/?url=pngimg.com/uploads/motorcycle/motorcycle_PNG3162.png&output=png";
+// Local high-quality hero food bowl image
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const HERO_BOWL_LOCAL = require("../../../assets/images/home-image.png");
 
 export default function HomeScreen() {
   const [searchQuery, setSearchQuery] = useState("");
@@ -151,9 +153,9 @@ export default function HomeScreen() {
           <Ionicons name="leaf" size={18} color="#34D399" style={styles.floatingLeafTop} />
           <Ionicons name="leaf" size={14} color="#10B981" style={styles.floatingLeafBottom} />
 
-          {/* Hero food bowl image – absolute positioned right */}
+          {/* Hero food bowl image – absolute positioned right, local asset */}
           <Image
-            source={{ uri: HERO_BOWL_IMG }}
+            source={HERO_BOWL_LOCAL}
             style={styles.heroImage}
             resizeMode="contain"
           />
@@ -526,10 +528,10 @@ const styles = StyleSheet.create({
     transform: [{ rotate: "45deg" }],
   },
   heroImage: {
-    width: 140,
-    height: 140,
+    width: 155,
+    height: 155,
     position: "absolute",
-    right: -15,
+    right: -10,
     top: 10,
     zIndex: 1,
   },
