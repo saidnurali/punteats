@@ -36,6 +36,11 @@ export default function LoginScreen() {
     try {
       const { error } = await supabase.auth.signInWithOtp({
         phone: fullPhone,
+        options: {
+          data: {
+            role: 'customer',
+          },
+        },
       });
       if (error) {
         Alert.alert("Authentication Error", error.message || "Could not send verification code. Please try again.");

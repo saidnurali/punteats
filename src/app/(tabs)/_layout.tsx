@@ -2,12 +2,17 @@ import React from "react";
 import { Tabs } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { View, Text, StyleSheet, Platform } from "react-native";
+import { useCart } from "@/lib/CartContext";
 
 export default function TabsLayout() {
+  const { totalItems } = useCart();
+
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
+        lazy: true,
+        sceneContainerStyle: { backgroundColor: "#F8F8F8" },
         tabBarActiveTintColor: "#1B7D3C",
         tabBarInactiveTintColor: "#6B6B6B",
         tabBarStyle: {
@@ -55,9 +60,11 @@ export default function TabsLayout() {
           tabBarIcon: ({ color, focused }) => (
             <View>
               <Ionicons name={focused ? "cart" : "cart-outline"} size={24} color={color} />
-              <View style={styles.badgeContainer}>
-                <Text style={styles.badgeText}>2</Text>
-              </View>
+              {totalItems > 0 && (
+                <View style={styles.badgeContainer}>
+                  <Text style={styles.badgeText}>{totalItems > 99 ? "99+" : totalItems}</Text>
+                </View>
+              )}
             </View>
           ),
         }}

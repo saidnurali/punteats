@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from "react";
 import * as Sentry from "@sentry/react-native";
 import { Stack, useRouter, useSegments } from "expo-router";
-import { supabase } from "../lib/supabase";
+import { supabase } from "@/lib/supabase";
 import { Session } from "@supabase/supabase-js";
+import { CartProvider } from "@/lib/CartContext";
+import { WishlistProvider } from "@/lib/WishlistContext";
 
 Sentry.init({
   dsn: "https://0f091efee75d48364fd93e05442fa60d@o4511773028253696.ingest.de.sentry.io/4511773045751888",
@@ -18,14 +20,14 @@ function RootLayout() {
 
   useEffect(() => {
     // Check initial session state
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
+    supabase.auth.getSession().then(({ data }: any) => {
+      setSession(data?.session ?? null);
       setInitialized(true);
     });
 
     // Listen to Supabase auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
+      (_event: any, session: Session | null) => {
         setSession(session);
         setInitialized(true);
       }
@@ -41,7 +43,7 @@ function RootLayout() {
 
     const inAuthGroup = segments[0] === "(home)";
     const inTabsGroup = segments[0] === "(tabs)";
-    const isBypass = (global as any).__BYPASS_AUTH__ === true;
+    const isBypass = (globalThis as any).__BYPASS_AUTH__ === true;
 
     // If session exists (or bypass code 123456 used) while inside auth screens, redirect to tabs
     if ((session || isBypass) && inAuthGroup) {
@@ -54,12 +56,16 @@ function RootLayout() {
   }, [session, initialized, segments]);
 
   return (
-    <Stack
-      screenOptions={{
-        headerShown: false,
-        animation: "slide_from_right",
-      }}
-    />
+    <WishlistProvider>
+      <CartProvider>
+        <Stack
+          screenOptions={{
+            headerShown: false,
+            animation: "slide_from_right",
+          }}
+        />
+      </CartProvider>
+    </WishlistProvider>
   );
 }
 

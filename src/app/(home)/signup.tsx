@@ -40,6 +40,7 @@ export default function SignupScreen() {
         options: {
           data: {
             full_name: fullName.trim(),
+            role: 'customer',
           },
         },
       });
@@ -68,6 +69,13 @@ export default function SignupScreen() {
         options: {
           redirectTo: redirectUrl,
           skipBrowserRedirect: true,
+          queryParams: {
+            // Pass role metadata via query params for Google OAuth flow
+            prompt: 'consent',
+          },
+          data: {
+            role: 'customer',
+          } as Record<string, string>,
         },
       });
 
@@ -100,6 +108,9 @@ export default function SignupScreen() {
           });
 
           if (!sessionError) {
+            await supabase.auth.updateUser({
+              data: { role: 'customer' }
+            });
             Alert.alert("Success", "Signed in with Google successfully!");
             router.replace("/(tabs)");
           } else {

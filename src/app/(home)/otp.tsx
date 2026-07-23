@@ -88,7 +88,7 @@ export default function OTPScreen() {
     if (!phone) return;
     setLoading(true);
     try {
-      const { error } = await supabase.auth.verifyOtp({
+      const { error, data } = await supabase.auth.verifyOtp({
         phone: phone,
         token,
         type: "sms",
@@ -98,6 +98,9 @@ export default function OTPScreen() {
         setOtp(Array(OTP_LENGTH).fill(""));
         inputRefs.current[0]?.focus();
       } else {
+        if (data?.user && (!data.user.user_metadata?.role || data.user.user_metadata.role !== 'customer')) {
+          await supabase.auth.updateUser({ data: { role: 'customer' } });
+        }
         // Success — navigate to main app tabs
         (global as any).__BYPASS_AUTH__ = true;
         Alert.alert("Success", "Phone verified successfully!");
