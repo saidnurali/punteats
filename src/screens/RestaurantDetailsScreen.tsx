@@ -27,7 +27,7 @@ const DEFAULT_COVER = "https://images.unsplash.com/photo-1544025162-d76694265947
 export default function RestaurantDetailsScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const { addToCart } = useCart();
+  const { addToCart, totalItems, totalPrice } = useCart();
   const { isWishlisted, toggleWishlist } = useWishlist();
 
   const [restaurant, setRestaurant] = useState<any | null>(null);
@@ -265,7 +265,7 @@ export default function RestaurantDetailsScreen() {
         </View>
       </SafeAreaView>
 
-      <ScrollView style={styles.scrollView} contentContainerStyle={{ paddingBottom: 90 }} showsVerticalScrollIndicator={false}>
+      <ScrollView style={styles.scrollView} contentContainerStyle={{ paddingBottom: totalItems > 0 ? 150 : 30 }} showsVerticalScrollIndicator={false}>
         {/* ── Hero Cover Image ── */}
         <View style={styles.heroImgWrap}>
           <Image
