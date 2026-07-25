@@ -10,6 +10,7 @@ import {
   Share,
   StatusBar,
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Image } from "expo-image";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -27,7 +28,7 @@ const DEFAULT_COVER = "https://images.unsplash.com/photo-1544025162-d76694265947
 export default function RestaurantDetailsScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const { addToCart, totalItems, totalPrice } = useCart();
+  const { addToCart, totalItems, totalPrice, cartItems, updateQuantity, removeFromCart } = useCart();
   const { isWishlisted, toggleWishlist } = useWishlist();
 
   const [restaurant, setRestaurant] = useState<any | null>(null);
@@ -89,6 +90,14 @@ export default function RestaurantDetailsScreen() {
       return;
     }
     try {
+      // 0. Try to load from cache instantly
+      AsyncStorage.getItem(`@cached_rest_${id}`).then(res => {
+        if(res) setRestaurant(JSON.parse(res));
+      }).catch(()=>null);
+      AsyncStorage.getItem(`@cached_foods_${id}`).then(res => {
+        if(res) setFoodItems(JSON.parse(res));
+      }).catch(()=>null);
+
       // 1. Fetch restaurant info
       let queryRest = supabase.from("restaurants").select("*");
       if (!isNaN(Number(id))) {
@@ -99,65 +108,47 @@ export default function RestaurantDetailsScreen() {
       const { data: restData } = await queryRest.single();
 
       if (restData) {
-        setRestaurant({
-          id: String(restData.id),
-          name: restData.name || "Restaurant",
-          tags: restData.category || "Somali Traditional • Fast Food",
-          prep_time: restData.prep_time || "20-30 min",
-          delivery_fee: restData.delivery_fee
-            ? typeof restData.delivery_fee === "number"
-              ? `$${restData.delivery_fee.toFixed(2)}`
-              : String(restData.delivery_fee).startsWith("$")
-              ? String(restData.delivery_fee)
-              : `$${restData.delivery_fee}`
-            : "$1.50",
-          min_order: restData.min_order
-            ? typeof restData.min_order === "number"
-              ? `$${restData.min_order}`
-              : String(restData.min_order).startsWith("$")
-              ? String(restData.min_order)
-              : `$${restData.min_order}`
-            : "$5",
-          rating: String(restData.rating || "4.6"),
-          reviews_count: restData.reviews_count || "128",
-          cover_image: restData.cover_image || restData.image_url || DEFAULT_COVER,
-          logo_image: restData.logo_image || restData.emoji || "🏪",
-          description: restData.description || "Delivering authentic and delicious meals directly to your door across Garowe.",
-          address: restData.address || "Main Street, Garowe, Puntland",
-          phone: restData.phone || "+252 90 7000000",
-        });
+        setRestaurant(restData);
+        AsyncStorage.setItem(`@cached_rest_${id}`, JSON.stringify(restData)).catch(()=>null);
       } else {
         // Fallback info if restaurant not found right away
         setRestaurant({
-          id: String(id),
           name: "Pizza House",
           tags: "Italian • Pizza • Fast Food",
           prep_time: "20-30 min",
-          delivery_fee: "$1.50",
-          min_order: "$5",
+          delivery_fee: 1.50,
+          min_order: 5,
           rating: "4.6",
           reviews_count: "128",
           cover_image: DEFAULT_COVER,
-          logo_image: "🍕",
-          description: "Delivering authentic and delicious meals directly to your door across Garowe.",
-          address: "Garowe Center, Puntland",
-          phone: "+252 90 7000000",
         });
       }
 
-      // 2. Fetch food items linked specifically to this restaurant ID (ONLY 'In Stock')
-      let queryFood = supabase.from("food_items").select("*").eq("availability", "In Stock");
-      if (!isNaN(Number(id))) {
-        queryFood = queryFood.or(`restaurant_id.eq.${id},restaurant_id.eq.${Number(id)}`);
-      } else {
-        queryFood = queryFood.eq("restaurant_id", id);
-      }
-      const { data: foodData } = await queryFood;
+      // 2. Fetch food items linked specifically to this restaurant ID
+      const restaurantName = restData?.name || "Pizza House";
+      const { data: foods } = await supabase
+        .from("food_items")
+        .select("*")
+        .or(`restaurant_id.eq.${id},restaurant_name.ilike.%${restaurantName}%`);
 
-      if (foodData && foodData.length > 0) {
-        setFoodItems(foodData.map(mapFoodItemToProduct));
+      if (foods && foods.length > 0) {
+        const mappedFoods = foods.map(mapFoodItemToProduct);
+        setFoodItems(mappedFoods);
+        AsyncStorage.setItem(`@cached_foods_${id}`, JSON.stringify(mappedFoods)).catch(()=>null);
       } else {
-        setFoodItems([]);
+        // Secondary Fallback Query: Fetch all foods if restaurant_id was stored as string/null causing UUID cast error
+        const { data: allFoods } = await supabase.from("food_items").select("*");
+        if (allFoods) {
+          const filtered = allFoods.filter(item => 
+            item.restaurant_id === id || 
+            item.restaurant_name?.toLowerCase().trim() === restaurantName.toLowerCase().trim()
+          );
+          const mappedFiltered = filtered.map(mapFoodItemToProduct);
+          setFoodItems(mappedFiltered);
+          AsyncStorage.setItem(`@cached_foods_${id}`, JSON.stringify(mappedFiltered)).catch(()=>null);
+        } else {
+          setFoodItems([]);
+        }
       }
 
       // 3. Fetch real reviews for this restaurant
@@ -208,7 +199,7 @@ export default function RestaurantDetailsScreen() {
   const groupedMenu = useMemo(() => {
     const groups: { [key: string]: Product[] } = {};
     foodItems.forEach((item) => {
-      const cat = item.category || "Menu";
+      const cat = item.category?.trim() || "Menu";
       if (!groups[cat]) groups[cat] = [];
       groups[cat].push(item);
     });
@@ -217,8 +208,19 @@ export default function RestaurantDetailsScreen() {
 
   const activeDishes = useMemo(() => {
     if (selectedCategory === "All") return foodItems;
-    return groupedMenu[selectedCategory] || [];
-  }, [selectedCategory, foodItems, groupedMenu]);
+    const cleanSelected = selectedCategory.trim().toLowerCase();
+    return foodItems.filter(item => item.category?.trim().toLowerCase() === cleanSelected);
+  }, [selectedCategory, foodItems]);
+
+  const getCategoryCount = (catName: string) => {
+    if (catName === 'All') return foodItems.length;
+    const cleanCat = catName.trim().toLowerCase();
+    return foodItems.filter(item => item.category?.trim().toLowerCase() === cleanCat).length;
+  };
+
+  const availableCategories = useMemo(() => {
+    return Object.keys(groupedMenu).filter(cat => getCategoryCount(cat) > 0);
+  }, [groupedMenu, foodItems]);
 
   const coverUri = restaurant?.cover_image || DEFAULT_COVER;
 
@@ -265,6 +267,8 @@ export default function RestaurantDetailsScreen() {
         </View>
       </SafeAreaView>
 
+
+
       <ScrollView style={styles.scrollView} contentContainerStyle={{ paddingBottom: totalItems > 0 ? 150 : 30 }} showsVerticalScrollIndicator={false}>
         {/* ── Hero Cover Image ── */}
         <View style={styles.heroImgWrap}>
@@ -287,22 +291,26 @@ export default function RestaurantDetailsScreen() {
             </View>
           </View>
 
-          <Text style={styles.tagsSubtitle}>{restaurant?.tags || "Italian • Pizza • Fast Food"}</Text>
+          <Text style={styles.tagsSubtitle}>{restaurant?.category || restaurant?.tags || "Italian • Pizza • Fast Food"}</Text>
 
           {/* 3-Badge Metric Container */}
           <View style={styles.metricsContainer}>
             <View style={styles.metricBox}>
-              <Text style={styles.metricValue}>{restaurant?.prep_time || "20-30 min"}</Text>
+              <Text style={styles.metricValue}>{restaurant?.delivery_time || restaurant?.prep_time || "15-25 min"}</Text>
               <Text style={styles.metricLabel}>Delivery Time</Text>
             </View>
             <View style={styles.metricDivider} />
             <View style={styles.metricBox}>
-              <Text style={styles.metricValue}>{restaurant?.delivery_fee || "$1.50"}</Text>
+              <Text style={styles.metricValue}>
+                {restaurant?.delivery_fee !== undefined && restaurant?.delivery_fee !== null ? `$${Number(restaurant.delivery_fee).toFixed(2)}` : "$2.00"}
+              </Text>
               <Text style={styles.metricLabel}>Delivery Fee</Text>
             </View>
             <View style={styles.metricDivider} />
             <View style={styles.metricBox}>
-              <Text style={styles.metricValue}>{restaurant?.min_order || "$5"}</Text>
+              <Text style={styles.metricValue}>
+                {restaurant?.min_order !== undefined && restaurant?.min_order !== null ? `$${Number(restaurant.min_order).toFixed(2)}` : "$0.00"}
+              </Text>
               <Text style={styles.metricLabel}>Min. Order</Text>
             </View>
           </View>
@@ -364,7 +372,7 @@ export default function RestaurantDetailsScreen() {
               >
                 <Text style={{ color: selectedCategory === "All" ? "#FFFFFF" : "#4B5563", fontWeight: "700" }}>All</Text>
               </TouchableOpacity>
-              {Object.keys(groupedMenu).map(cat => (
+              {availableCategories.map(cat => (
                 <TouchableOpacity
                   key={cat}
                   style={{
@@ -416,23 +424,47 @@ export default function RestaurantDetailsScreen() {
                         </View>
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
                           <Text style={styles.dishGridPrice}>{item.priceFormatted}</Text>
-                          <TouchableOpacity
-                            style={{
-                              width: 32,
-                              height: 32,
-                              borderRadius: 16,
-                              backgroundColor: "#1B7D3C",
-                              justifyContent: "center",
-                              alignItems: "center",
-                            }}
-                            activeOpacity={0.7}
-                            onPress={(e) => {
-                              e.stopPropagation();
-                              addToCart(item, 1);
-                            }}
-                          >
-                            <Ionicons name="add" size={20} color="#FFFFFF" />
-                          </TouchableOpacity>
+                          {(() => {
+                            const cartItem = cartItems.find(c => c.id === item.id);
+                            if (cartItem) {
+                              return (
+                                <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#F0FDF4', borderRadius: 20, paddingHorizontal: 6, paddingVertical: 4 }}>
+                                  <TouchableOpacity 
+                                    onPress={(e) => { e.stopPropagation(); cartItem.quantity > 1 ? updateQuantity(item.id, -1) : removeFromCart(item.id); }}
+                                    style={{ width: 26, height: 26, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF', borderRadius: 13, shadowColor: '#000', shadowOffset: {width:0, height:1}, shadowOpacity: 0.1, shadowRadius: 2, elevation: 1 }}
+                                  >
+                                    <Ionicons name="remove" size={16} color="#1B7D3C" />
+                                  </TouchableOpacity>
+                                  <Text style={{ marginHorizontal: 10, fontSize: 14, fontWeight: '700', color: '#1B7D3C' }}>{cartItem.quantity}</Text>
+                                  <TouchableOpacity 
+                                    onPress={(e) => { e.stopPropagation(); updateQuantity(item.id, 1); }}
+                                    style={{ width: 26, height: 26, alignItems: 'center', justifyContent: 'center', backgroundColor: '#1B7D3C', borderRadius: 13 }}
+                                  >
+                                    <Ionicons name="add" size={16} color="#FFFFFF" />
+                                  </TouchableOpacity>
+                                </View>
+                              );
+                            }
+                            return (
+                              <TouchableOpacity
+                                style={{
+                                  width: 32,
+                                  height: 32,
+                                  borderRadius: 16,
+                                  backgroundColor: "#1B7D3C",
+                                  justifyContent: "center",
+                                  alignItems: "center",
+                                }}
+                                activeOpacity={0.7}
+                                onPress={(e) => {
+                                  e.stopPropagation();
+                                  addToCart(item, 1);
+                                }}
+                              >
+                                <Ionicons name="add" size={20} color="#FFFFFF" />
+                              </TouchableOpacity>
+                            );
+                          })()}
                         </View>
                       </View>
                     </TouchableOpacity>
@@ -507,6 +539,21 @@ export default function RestaurantDetailsScreen() {
           </View>
         )}
       </ScrollView>
+
+      {/* ── Floating View Cart Action Bar ── */}
+      {totalItems > 0 && (
+        <View style={{ position: 'absolute', bottom: 30, left: 20, right: 20, backgroundColor: '#10B981', borderRadius: 56, elevation: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.2, shadowRadius: 16, zIndex: 9999 }}>
+          <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 16 }} onPress={() => router.push('/(tabs)/cart')}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <View style={{ backgroundColor: 'rgba(255,255,255,0.25)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 }}>
+                <Text style={{ color: '#FFF', fontWeight: 'bold', fontSize: 14 }}>{totalItems}</Text>
+              </View>
+              <Text style={{ color: '#FFF', fontWeight: 'bold', fontSize: 16 }}>View Cart</Text>
+            </View>
+            <Text style={{ color: '#FFF', fontWeight: 'bold', fontSize: 16 }}>${totalPrice.toFixed(2)}</Text>
+          </TouchableOpacity>
+        </View>
+      )}
     </View>
   );
 }

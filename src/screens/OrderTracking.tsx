@@ -47,7 +47,18 @@ export default function OrderTrackingScreen() {
   useEffect(() => {
     async function loadOrder() {
       if (!activeId) return;
-      const { data } = await supabase.from('orders').select('*').eq('id', activeId).single();
+
+      const isUUID = activeId.length === 36 && activeId.includes('-');
+      const normalizedNumber = '#' + activeId.replace(/^#+/, '');
+
+      let query = supabase.from('orders').select('*');
+      if (isUUID) {
+        query = query.eq('id', activeId);
+      } else {
+        query = query.or(`order_number.eq.${normalizedNumber},order_number.eq.${activeId}`);
+      }
+
+      const { data, error } = await query.single();
       if (data) setOrder(data);
       setLoading(false);
     }
@@ -55,8 +66,14 @@ export default function OrderTrackingScreen() {
 
     // Subscribe to realtime status changes
     const channel = supabase.channel(`order_${activeId}`)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'orders', filter: `id=eq.${activeId}` }, 
-        (payload) => setOrder(payload.new)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'orders' }, 
+        (payload) => {
+          const newOrder = payload.new as any;
+          const normalizedNumber = '#' + activeId.replace(/^#+/, '');
+          if (newOrder.id === activeId || newOrder.order_number === activeId || newOrder.order_number === normalizedNumber) {
+            setOrder(newOrder);
+          }
+        }
       ).subscribe();
 
     return () => { supabase.removeChannel(channel); };
@@ -120,9 +137,9 @@ export default function OrderTrackingScreen() {
 
             {/* Rejection Reason Container */}
             <View style={{ width: '100%', backgroundColor: '#FEF2F2', borderLeftWidth: 4, borderLeftColor: '#DC2626', borderRadius: 8, padding: 12, marginVertical: 10 }}>
-              <Text style={{ fontSize: 12, fontWeight: '700', color: '#991B1B', textTransform: 'uppercase', marginBottom: 4 }}>Reason for Cancellation:</Text>
-              <Text style={{ fontSize: 14, color: '#B91C1C', lineHeight: 20 }}>
-                {order?.rejection_reason || 'Order was cancelled by restaurant or admin.'}
+              <Text style={{ fontSize: 12, fontWeight: '700', color: '#991B1B', textTransform: 'uppercase', marginBottom: 4 }}>Reason:</Text>
+              <Text style={{ fontSize: 14, color: '#DC2626', lineHeight: 20 }}>
+                {order?.rejection_reason || 'Order was cancelled by restaurant.'}
               </Text>
             </View>
 
@@ -135,7 +152,8 @@ export default function OrderTrackingScreen() {
     );
   }
 
-  const displayOrderId = order?.order_number?.startsWith('#') ? order.order_number : `#${order?.order_number || activeId || "PG123456"}`;
+  const fallbackId = activeId || "PG123456";
+  const displayOrderId = order?.order_number?.startsWith('#') ? order.order_number : `#${order?.order_number || fallbackId.replace(/^#+/, '')}`;
 
   // 🚨 IF ORDER IS DELIVERED:
   if (order?.status?.toLowerCase() === 'delivered') {
@@ -159,7 +177,7 @@ export default function OrderTrackingScreen() {
             <Text style={{ fontSize: 14, color: '#4B5563', textAlign: 'center', marginBottom: 16 }}>Enjoy your meal! Thank you for ordering with PuntGo.</Text>
 
             <TouchableOpacity style={{ width: '100%', backgroundColor: '#10B981', paddingVertical: 14, borderRadius: 12, alignItems: 'center' }} onPress={() => router.replace('/(tabs)')}>
-              <Text style={{ color: '#FFFFFF', fontWeight: 'bold', fontSize: 15 }}>Back to Home</Text>
+              <Text style={{ color: '#FFFFFF', fontWeight: 'bold', fontSize: 15 }}>Rate Experience & Back Home</Text>
             </TouchableOpacity>
           </View>
         </ScrollView>

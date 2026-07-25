@@ -13,7 +13,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { getStoredOrders, LiveOrder } from "@/lib/ordersStore";
 import { supabase } from "@/lib/supabase";
-import Animated, { FadeIn } from "react-native-reanimated";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
 
 export default function OrdersScreen() {
   const router = useRouter();
@@ -22,10 +23,20 @@ export default function OrdersScreen() {
 
   const fetchOrders = async () => {
     try {
-      const { data, error } = await supabase
-        .from('orders')
-        .select('*')
-        .order('created_at', { ascending: false });
+      const storedSession = await AsyncStorage.getItem('puntgo_user_session');
+      let userId = undefined;
+      if (storedSession) {
+        const p = JSON.parse(storedSession);
+        userId = p.id;
+      }
+
+      let query = supabase.from('orders').select('*');
+      
+      if (userId) {
+        query = query.eq('user_id', userId);
+      }
+
+      const { data, error } = await query.order('created_at', { ascending: false });
 
       if (data) {
         const mapped = data.map((o: any) => {
@@ -125,9 +136,9 @@ export default function OrdersScreen() {
             const badgeColor = isDelivered ? "#1B7D3C" : isCancelled ? "#DC2626" : "#D97706";
 
             return (
-              <TouchableOpacity
-                key={order.id}
-                style={styles.orderCard}
+              <Animated.View key={order.id} entering={FadeInDown.duration(400)}>
+                <TouchableOpacity
+                  style={styles.orderCard}
                 activeOpacity={0.88}
                 onPress={() => router.push({
                   pathname: '/order-tracking',
@@ -165,6 +176,7 @@ export default function OrdersScreen() {
                   </View>
                 </View>
               </TouchableOpacity>
+              </Animated.View>
             );
           })}
           <View style={{ height: 30 }} />

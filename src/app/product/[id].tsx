@@ -23,7 +23,7 @@ const { width } = Dimensions.get("window");
 export default function ProductDetailsScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const { addToCart, totalItems, totalPrice } = useCart();
+  const { addToCart, totalItems, totalPrice, cartItems } = useCart();
   const { isWishlisted, toggleWishlist } = useWishlist();
 
   const [product, setProduct] = useState<Product | undefined>(() => getProductById(id || "2") || getProductById("2"));
@@ -93,6 +93,15 @@ export default function ProductDetailsScreen() {
     : product.price;
   const addOnsTotal = selectedAddOns.reduce((sum, addon) => sum + (addon.price || 0), 0);
   const calculatedTotal = ((basePrice + addOnsTotal) * quantity).toFixed(2);
+
+  const existingCartItem = React.useMemo(() => {
+    if (!product) return undefined;
+    return cartItems.find((c: any) => 
+      c.id === product.id && 
+      JSON.stringify(c.selectedVariant || null) === JSON.stringify(selectedVariant || null) &&
+      JSON.stringify(c.selectedAddOns || []) === JSON.stringify(selectedAddOns || [])
+    );
+  }, [cartItems, product, selectedVariant, selectedAddOns]);
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top"]}>
@@ -366,32 +375,14 @@ export default function ProductDetailsScreen() {
 
       </ScrollView>
 
-      {/* ── Bottom Fixed Action Bar ── */}
-      <View style={styles.bottomActionBar}>
-        {totalItems > 0 ? (
-          <TouchableOpacity
-            style={[styles.addToCartButton, { flex: 1, flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 24 }]}
-            activeOpacity={0.7}
-            onPress={() => router.push("/(tabs)/cart")}
-          >
-            <Text style={styles.addToCartButtonText}>View Cart ({totalItems})</Text>
-            <Text style={[styles.addToCartButtonText, { fontWeight: "800" }]}>${totalPrice.toFixed(2)}</Text>
-          </TouchableOpacity>
-        ) : (
-          <>
-            <View style={styles.priceContainer}>
-              <Text style={styles.totalPrice}>${calculatedTotal}</Text>
-            </View>
-
-            <TouchableOpacity
-              style={styles.addToCartButton}
-              activeOpacity={0.7}
-              onPress={handleAddToCart}
-            >
-              <Text style={styles.addToCartButtonText}>Add to Cart</Text>
-            </TouchableOpacity>
-          </>
-        )}
+      {/* FIXED BOTTOM ADD TO CART FOOTER */}
+      <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: '#FFFFFF', paddingHorizontal: 20, paddingVertical: 16, borderTopWidth: 1, borderTopColor: '#F3F4F6', elevation: 10, shadowColor: '#000', shadowOffset: { width: 0, height: -3 }, shadowOpacity: 0.05, shadowRadius: 6, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+        <TouchableOpacity style={{ flex: 1, height: 52, backgroundColor: '#1B7D3C', borderRadius: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 }} onPress={handleAddToCart}>
+          <Ionicons name="cart-outline" size={22} color="#FFFFFF" />
+          <Text style={{ color: '#FFFFFF', fontWeight: 'bold', fontSize: 16 }}>
+            {existingCartItem ? `Already in Cart (${existingCartItem.quantity}) • Add ${quantity} More` : `Add to Cart - $${Number(calculatedTotal).toFixed(2)}`}
+          </Text>
+        </TouchableOpacity>
       </View>
     </SafeAreaView>
   );

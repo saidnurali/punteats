@@ -11,6 +11,7 @@ import {
   Platform,
   StatusBar,
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Image } from "expo-image";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
@@ -83,81 +84,24 @@ const DELIVERY_SCOOTER = "https://wsrv.nl/?url=pngimg.com/uploads/motorcycle/mot
 // ─── Component ───────────────────────────────────────────────────────────────
 export default function HomeScreen() {
   const router = useRouter();
-  const { addToCart, totalItems, totalPrice } = useCart();
+  const { addToCart, cartItems, updateQuantity, removeFromCart } = useCart();
   const { isWishlisted, toggleWishlist } = useWishlist();
   const [searchQuery, setSearchQuery]           = useState("");
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [activeHeroIndex, setActiveHeroIndex]   = useState(0);
 
-  const [products, setProducts] = useState<Product[]>(PRODUCTS_DATA);
+  const [products, setProducts] = useState<Product[]>([]);
   const [categoriesList, setCategoriesList] = useState<any[]>(CATEGORIES);
-  const [restaurantsList, setRestaurantsList] = useState<any[]>(INITIAL_RESTAURANTS);
+  const [restaurantsList, setRestaurantsList] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    let isMounted = true;
-
-    const loadMenuAndRestaurants = async () => {
-      // 1. Synchronously set cached restaurants first if available (stale-while-revalidate)
-      const cachedRests = getCachedRestaurants();
-      if (cachedRests.length > 0 && isMounted) {
-        setRestaurantsList(cachedRests);
-      }
-
-      // 2. Fetch fresh products and restaurants in background without blocking
+    const fetchData = async () => {
+      const { data: rest } = await supabase.from('restaurants').select('*');
       const fetchedProducts = await fetchProductsFromSupabase();
-      if (isMounted && fetchedProducts) {
-        setProducts(fetchedProducts);
-
-        const officialNames = new Set(CATEGORIES.map(c => c.name.toLowerCase().replace(/^[^\w\s]+/g, "").trim()));
-        const dynamicCats: any[] = [...CATEGORIES];
-        let idx = 100;
-        fetchedProducts.forEach(p => {
-          if (p.category && p.category.trim() !== "") {
-            const cleanCat = p.category.replace(/^[^\w\s]+/g, "").trim();
-            if (cleanCat && !officialNames.has(cleanCat.toLowerCase())) {
-              officialNames.add(cleanCat.toLowerCase());
-              let emojiOrImg: any = { emoji: "🍴" };
-              const lower = cleanCat.toLowerCase();
-              if (lower.includes("pizza")) emojiOrImg = { image: "https://wsrv.nl/?url=pngimg.com/uploads/pizza/pizza_PNG44077.png&output=png" };
-              else if (lower.includes("burger")) emojiOrImg = { image: "https://wsrv.nl/?url=pngimg.com/uploads/burger_sandwich/burger_sandwich_PNG4135.png&output=png" };
-              else if (lower.includes("chicken")) emojiOrImg = { image: "https://wsrv.nl/?url=pngimg.com/uploads/fried_chicken/fried_chicken_PNG14104.png&output=png" };
-              else if (lower.includes("dessert") || lower.includes("cake")) emojiOrImg = { image: "https://wsrv.nl/?url=pngimg.com/uploads/cake/cake_PNG13115.png&output=png" };
-              else if (lower.includes("drink") || lower.includes("cola")) emojiOrImg = { image: "https://wsrv.nl/?url=pngimg.com/uploads/cocacola/cocacola_PNG22.png&output=png" };
-              else if (lower.includes("coffee") || lower.includes("tea")) emojiOrImg = { image: coffeeTeaIcon };
-              else if (lower.includes("rice")) emojiOrImg = { emoji: "🍚" };
-              else if (lower.includes("shawarma")) emojiOrImg = { emoji: "🌯" };
-              else if (lower.includes("pasta")) emojiOrImg = { emoji: "🍝" };
-              else if (lower.includes("bbq") || lower.includes("grill")) emojiOrImg = { emoji: "🥩" };
-              else if (lower.includes("somali")) emojiOrImg = { emoji: "🐪" };
-
-              dynamicCats.push({
-                id: String(idx++),
-                name: cleanCat,
-                ...emojiOrImg
-              });
-            }
-          }
-        });
-        
-        // Filter out categories with zero "In Stock" items
-        const activeCategories = dynamicCats.filter(cat => {
-          if (cat.name === "All") return true;
-          return fetchedProducts.some(p => {
-             const cCat = (p.category || "").replace(/^[^\w\s]+/g, "").trim().toLowerCase();
-             return p.availability === "In Stock" && (cCat === cat.name.toLowerCase() || cCat.includes(cat.name.toLowerCase()));
-          });
-        });
-        
-        setCategoriesList(activeCategories);
-      }
-
-      const { data: activeRestaurants, error } = await supabase
-        .from('restaurants')
-        .select('*');
-        
-      if (isMounted && activeRestaurants) {
-        // Map to RestaurantItem format for the FlatList
-        const mappedRests = activeRestaurants.map((r: any) => ({
+      
+      if (rest) {
+        const mappedRests = rest.map((r: any) => ({
           id: String(r.id),
           name: r.name || "Restaurant",
           tags: r.category || "Somali Traditional & Fast Food",
@@ -171,41 +115,53 @@ export default function HomeScreen() {
           status: r.status || "Active",
         }));
         setRestaurantsList(mappedRests);
+        AsyncStorage.setItem('@cached_home_restaurants', JSON.stringify(mappedRests)).catch(()=>null);
       }
+      if (fetchedProducts) {
+        setProducts(fetchedProducts);
+        AsyncStorage.setItem('@cached_home_products', JSON.stringify(fetchedProducts)).catch(()=>null);
+      }
+      setIsLoading(false);
     };
+    
+    // Load local cache first for instant UI
+    AsyncStorage.getItem('@cached_home_restaurants').then(res => {
+      if(res) setRestaurantsList(JSON.parse(res));
+    }).catch(()=>null);
+    AsyncStorage.getItem('@cached_home_products').then(res => {
+      if(res) setProducts(JSON.parse(res));
+    }).catch(()=>null);
 
-    loadMenuAndRestaurants();
+    fetchData();
 
-    const channelTopic = `mobile_home_sync_${Math.random().toString(36).substring(2, 9)}`;
-    const channel = supabase.channel(channelTopic)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'food_items' }, () => {
-        loadMenuAndRestaurants();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'restaurants' }, () => {
-        loadMenuAndRestaurants();
-      })
+    const channelFood = supabase.channel(`food_realtime_${Date.now()}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'food_items' }, () => fetchData())
       .subscribe();
 
-    return () => {
-      isMounted = false;
-      channel.unsubscribe();
-      supabase.removeChannel(channel);
+    const channelRest = supabase.channel(`rest_realtime_${Date.now()}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'restaurants' }, () => fetchData())
+      .subscribe();
+
+    return () => { 
+      supabase.removeChannel(channelFood); 
+      supabase.removeChannel(channelRest);
     };
   }, []);
 
-  const filteredFoods = selectedCategory === "All"
-    ? products
-    : products.filter((item) => {
-        const cleanItemCat = (item.category || "")
-          .replace(/^[\u2000-\u3300\uD83C-\uDBFF\uDC00-\uDFFF\s]+/g, "")
-          .trim()
-          .toLowerCase();
-        const cleanSelected = selectedCategory
-          .replace(/^[\u2000-\u3300\uD83C-\uDBFF\uDC00-\uDFFF\s]+/g, "")
-          .trim()
-          .toLowerCase();
-        return cleanItemCat === cleanSelected || cleanItemCat.includes(cleanSelected) || cleanSelected.includes(cleanItemCat);
-      });
+  const filteredFoods = selectedCategory === 'All' 
+    ? products 
+    : products.filter(item => 
+        item.category?.trim().toLowerCase() === selectedCategory.trim().toLowerCase()
+      );
+
+  const getCategoryCount = (categoryName: string) => {
+    if (categoryName === 'All') return products.length;
+    return products.filter(
+      item => item.category?.trim().toLowerCase() === categoryName.trim().toLowerCase()
+    ).length;
+  };
+
+  const activeCategories = CATEGORIES.filter(cat => getCategoryCount(cat.name) > 0);
 
 
   const renderHeader = () => (
@@ -314,7 +270,7 @@ export default function HomeScreen() {
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 4 }}
         entering={FadeInRight.duration(400).delay(220)}
-        data={categoriesList}
+        data={activeCategories}
         keyExtractor={(cat) => cat.id}
         initialNumToRender={6}
         maxToRenderPerBatch={10}
@@ -423,12 +379,13 @@ export default function HomeScreen() {
         </TouchableOpacity>
       </View>
 
+
       <FlatList
         data={filteredFoods}
         keyExtractor={(item) => item.id}
         numColumns={2}
         columnWrapperStyle={{ justifyContent: "space-between", marginBottom: 12 }}
-        contentContainerStyle={[styles.scrollContent, { paddingBottom: totalItems > 0 ? 150 : 30 }]}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: 160 }]}
         showsVerticalScrollIndicator={false}
         initialNumToRender={6}
         maxToRenderPerBatch={10}
@@ -468,13 +425,37 @@ export default function HomeScreen() {
                 </Text>
                 <View style={styles.foodItemFooter}>
                   <Text style={styles.foodItemPrice}>{item.priceFormatted}</Text>
-                  <TouchableOpacity
-                    style={styles.foodAddBtn}
-                    activeOpacity={0.7}
-                    onPress={() => addToCart(item, 1)}
-                  >
-                    <Ionicons name="add" size={18} color="#1B7D3C" />
-                  </TouchableOpacity>
+                  {(() => {
+                    const cartItem = cartItems.find(c => c.id === item.id);
+                    if (cartItem) {
+                      return (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#F0FDF4', borderRadius: 20, paddingHorizontal: 6, paddingVertical: 4 }}>
+                          <TouchableOpacity 
+                            onPress={() => cartItem.quantity > 1 ? updateQuantity(item.id, -1) : removeFromCart(item.id)}
+                            style={{ width: 24, height: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF', borderRadius: 12, shadowColor: '#000', shadowOffset: {width:0, height:1}, shadowOpacity: 0.1, shadowRadius: 2, elevation: 1 }}
+                          >
+                            <Ionicons name="remove" size={14} color="#1B7D3C" />
+                          </TouchableOpacity>
+                          <Text style={{ marginHorizontal: 8, fontSize: 13, fontWeight: '700', color: '#1B7D3C' }}>{cartItem.quantity}</Text>
+                          <TouchableOpacity 
+                            onPress={() => updateQuantity(item.id, 1)}
+                            style={{ width: 24, height: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: '#1B7D3C', borderRadius: 12 }}
+                          >
+                            <Ionicons name="add" size={14} color="#FFFFFF" />
+                          </TouchableOpacity>
+                        </View>
+                      );
+                    }
+                    return (
+                      <TouchableOpacity
+                        style={styles.foodAddBtn}
+                        activeOpacity={0.7}
+                        onPress={() => addToCart(item, 1)}
+                      >
+                        <Ionicons name="add" size={18} color="#1B7D3C" />
+                      </TouchableOpacity>
+                    );
+                  })()}
                 </View>
               </TouchableOpacity>
             </Animated.View>
@@ -482,19 +463,6 @@ export default function HomeScreen() {
         }}
       />
 
-      {/* ── STEP 1: Floating View Cart Action Bar ── */}
-      {totalItems > 0 && (
-        <View style={[styles.floatingCartBar, { zIndex: 999 }]}>
-          <TouchableOpacity
-            style={styles.floatingCartBtn}
-            activeOpacity={0.7}
-            onPress={() => router.push("/(tabs)/cart")}
-          >
-            <Text style={styles.floatingCartBtnLeft}>View Cart ({totalItems})</Text>
-            <Text style={styles.floatingCartBtnRight}>${totalPrice.toFixed(2)}</Text>
-          </TouchableOpacity>
-        </View>
-      )}
       </SafeAreaView>
     </Animated.View>
   );
@@ -920,7 +888,7 @@ const styles = StyleSheet.create({
     bottom: 80,
     left: 20,
     right: 20,
-    zIndex: 999,
+    zIndex: 9999,
   },
   floatingCartBtn: {
     backgroundColor: "#1B7D3C",

@@ -14,6 +14,8 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useLocalSearchParams } from "expo-router";
+import { getStoredOrders, addOrder } from "@/lib/ordersStore";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useCart } from "@/lib/CartContext";
 import { supabase } from "@/lib/supabase";
 
@@ -38,14 +40,23 @@ export default function PaymentSelectionScreen() {
       const newId = `#PG${Math.floor(100000 + Math.random() * 900000)}`;
       setPlacedOrderId(newId);
 
-      const { data: { user } } = await supabase.auth.getUser();
-      const custName = user?.user_metadata?.full_name || user?.email?.split('@')[0] || "Customer";
-      const custPhone = user?.user_metadata?.phone || "+252 90 7112233";
+      let custName = "Customer";
+      let custPhone = "+252 90 7112233";
+      let userId = undefined;
+
+      const storedSession = await AsyncStorage.getItem('puntgo_user_session');
+      if (storedSession) {
+        const p = JSON.parse(storedSession);
+        custName = p.full_name || "Customer";
+        custPhone = p.phone_number || "+252 90 7112233";
+        userId = p.id;
+      }
 
       // The user wants restaurant_id and restaurant_name safely included.
       // We will only include restaurant_id if it's explicitly available, or omit it if it causes schema errors.
       // However, to strictly follow the prompt:
       const orderPayload: any = {
+        user_id: userId,
         order_number: newId,
         customer_name: custName,
         customer_phone: custPhone,

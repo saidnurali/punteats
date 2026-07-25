@@ -19,6 +19,7 @@ import { AntDesign, FontAwesome, Ionicons } from "@expo/vector-icons";
 import * as WebBrowser from "expo-web-browser";
 import * as AuthSession from "expo-auth-session";
 import { supabase } from "../../lib/supabase";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -34,21 +35,52 @@ export default function LoginScreen() {
     const fullPhone = "+252" + phoneNumber.trim();
     setLoading(true);
     try {
-      const { error } = await supabase.auth.signInWithOtp({
-        phone: fullPhone,
-        options: {
-          data: {
-            role: 'customer',
-          },
-        },
-      });
-      if (error) {
-        Alert.alert("Authentication Error", error.message || "Could not send verification code. Please try again.");
+      // 1. Check if user exists in Supabase
+      const { data: profile, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('phone_number', fullPhone)
+        .single();
+
+      if (profile) {
+        // User exists! Create session object
+        const sessionData = { 
+          id: profile.id, 
+          full_name: profile.full_name, 
+          phone_number: profile.phone_number 
+        };
+        
+        // Save to AsyncStorage
+        await AsyncStorage.setItem('puntgo_user_session', JSON.stringify(sessionData));
+        
+        // Navigate directly
+        router.replace('/(tabs)');
       } else {
-        router.push(`/(home)/otp?phone=${encodeURIComponent(fullPhone)}`);
+        // User does not exist
+        Alert.alert(
+          "Account Not Found", 
+          "Please sign up first to create a PuntGo account.",
+          [
+            { text: "Cancel", style: "cancel" },
+            { text: "Sign Up", onPress: () => router.push("/(home)/signup") }
+          ]
+        );
       }
-    } catch {
-      Alert.alert("Error", "Something went wrong sending the verification code.");
+    } catch (err: any) {
+      if (err.code === 'PGRST116') {
+        // PGRST116 means zero rows returned (not found)
+        Alert.alert(
+          "Account Not Found", 
+          "Please sign up first to create a PuntGo account.",
+          [
+            { text: "Cancel", style: "cancel" },
+            { text: "Sign Up", onPress: () => router.push("/(home)/signup") }
+          ]
+        );
+      } else {
+        console.error(err);
+        Alert.alert("Error", "Something went wrong checking your account.");
+      }
     } finally {
       setLoading(false);
     }
@@ -93,16 +125,27 @@ export default function LoginScreen() {
         const refresh_token = params.get("refresh_token");
 
         if (access_token && refresh_token) {
-          const { error: sessionError } = await supabase.auth.setSession({
+          const { data: sessionDataObj, error: sessionError } = await supabase.auth.setSession({
             access_token,
             refresh_token,
           });
 
-          if (!sessionError) {
+          if (!sessionError && sessionDataObj?.user) {
+            // Unify session by also saving Google profile to AsyncStorage
+            const user = sessionDataObj.user;
+            const sessionData = {
+              id: user.id,
+              full_name: user.user_metadata?.full_name || 'Google User',
+              phone_number: user.phone || '',
+              email: user.email || '',
+              avatar_url: user.user_metadata?.avatar_url || null,
+            };
+            await AsyncStorage.setItem('puntgo_user_session', JSON.stringify(sessionData));
+
             Alert.alert("Success", "Signed in with Google successfully!");
             router.replace("/(tabs)");
           } else {
-            Alert.alert("Session Error", sessionError.message);
+            Alert.alert("Session Error", sessionError?.message || "Failed to establish session");
           }
         }
       }
@@ -181,17 +224,17 @@ export default function LoginScreen() {
           <TouchableOpacity
             style={[
               styles.continueButton,
-              (phoneNumber.length === 0 || loading) && styles.continueButtonDisabled,
+              (phoneNumber.trim().length === 0 || loading) && styles.continueButtonDisabled,
             ]}
             activeOpacity={0.85}
             onPress={handleContinue}
-            disabled={phoneNumber.length === 0 || loading}
+            disabled={phoneNumber.trim().length === 0 || loading}
           >
             {loading ? (
               <ActivityIndicator color="#FFFFFF" size="small" />
             ) : (
               <Text style={styles.continueButtonText} allowFontScaling={true}>
-                Continue
+                Sign In
               </Text>
             )}
           </TouchableOpacity>

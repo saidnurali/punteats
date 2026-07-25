@@ -22,7 +22,7 @@ export default function WishlistScreen() {
 
   if (wishlistItems.length === 0) {
     return (
-      <Animated.View style={{ flex: 1 }} entering={FadeIn.duration(300)}>
+      <Animated.View style={{ flex: 1 }} entering={FadeInDown.duration(400)}>
         <SafeAreaView style={styles.container} edges={["top"]}>
           <StatusBar barStyle="dark-content" />
         <View style={styles.headerBar}>
@@ -51,7 +51,7 @@ export default function WishlistScreen() {
   }
 
   return (
-    <Animated.View style={{ flex: 1 }} entering={FadeIn.duration(300)}>
+    <Animated.View style={{ flex: 1 }} entering={FadeInDown.duration(400)}>
       <SafeAreaView style={styles.container} edges={["top"]}>
         <StatusBar barStyle="dark-content" />
 

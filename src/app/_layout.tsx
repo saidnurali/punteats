@@ -5,6 +5,7 @@ import { supabase } from "@/lib/supabase";
 import { Session } from "@supabase/supabase-js";
 import { CartProvider } from "@/lib/CartContext";
 import { WishlistProvider } from "@/lib/WishlistContext";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 Sentry.init({
   dsn: "https://0f091efee75d48364fd93e05442fa60d@o4511773028253696.ingest.de.sentry.io/4511773045751888",
@@ -13,30 +14,25 @@ Sentry.init({
 });
 
 function RootLayout() {
-  const [session, setSession] = useState<Session | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [initialized, setInitialized] = useState(false);
   const segments = useSegments();
   const router = useRouter();
 
   useEffect(() => {
-    // Check initial session state
-    supabase.auth.getSession().then(({ data }: any) => {
-      setSession(data?.session ?? null);
-      setInitialized(true);
-    });
-
-    // Listen to Supabase auth state changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event: any, session: Session | null) => {
-        setSession(session);
-        setInitialized(true);
+    const checkAuth = async () => {
+      // Check custom session
+      const storedProfile = await AsyncStorage.getItem('puntgo_user_session');
+      if (storedProfile) {
+        setIsAuthenticated(true);
+      } else {
+        setIsAuthenticated(false);
       }
-    );
-
-    return () => {
-      subscription.unsubscribe();
+      setInitialized(true);
     };
-  }, []);
+
+    checkAuth();
+  }, [segments]); // Check auth when navigation segments change
 
   useEffect(() => {
     if (!initialized) return;
@@ -45,15 +41,15 @@ function RootLayout() {
     const inTabsGroup = segments[0] === "(tabs)";
     const isBypass = (globalThis as any).__BYPASS_AUTH__ === true;
 
-    // If session exists (or bypass code 123456 used) while inside auth screens, redirect to tabs
-    if ((session || isBypass) && inAuthGroup) {
+    // IF SESSION EXISTS (User logged in)
+    if ((isAuthenticated || isBypass) && inAuthGroup) {
       router.replace("/(tabs)");
     }
-    // If session is null (not authenticated) while inside tabs, keep/redirect to login screen
-    else if (!session && !isBypass && inTabsGroup) {
+    // IF NO SESSION (User logged out)
+    else if (!isAuthenticated && !isBypass && inTabsGroup) {
       router.replace("/(home)/login");
     }
-  }, [session, initialized, segments]);
+  }, [isAuthenticated, initialized, segments]);
 
   return (
     <WishlistProvider>

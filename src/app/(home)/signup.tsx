@@ -30,27 +30,57 @@ export default function SignupScreen() {
   const { height } = useWindowDimensions();
   const isSmallScreen = height < 700;
 
+  const isFormValid = fullName.trim().length > 0 && phoneNumber.trim().length > 0;
+
   const handleSignUp = async () => {
-    if (fullName.trim().length === 0 || phoneNumber.trim().length === 0 || loading) return;
+    if (!isFormValid || loading) return;
     const fullPhone = "+252" + phoneNumber.trim();
     setLoading(true);
     try {
-      const { error } = await supabase.auth.signInWithOtp({
-        phone: fullPhone,
-        options: {
-          data: {
-            full_name: fullName.trim(),
-            role: 'customer',
-          },
-        },
-      });
-      if (error) {
-        Alert.alert("Registration Error", error.message || "Could not send verification code. Please try again.");
-      } else {
-        router.push(`/(home)/otp?phone=${encodeURIComponent(fullPhone)}`);
+      // 1. Check if user exists in Supabase
+      const { data: profile, error: fetchError } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('phone_number', fullPhone)
+        .single();
+
+      if (fetchError && fetchError.code !== 'PGRST116') {
+        throw fetchError;
       }
-    } catch {
-      Alert.alert("Error", "Something went wrong sending the verification code.");
+
+      if (profile) {
+        Alert.alert(
+          "Number Registered", 
+          "This number is already registered. Please Log In.",
+          [
+            { text: "Cancel", style: "cancel" },
+            { text: "Log In", onPress: () => router.push("/(home)/login") }
+          ]
+        );
+        return;
+      }
+
+      // If PGRST116 (0 rows), we proceed to send OTP!
+      const otp = Math.floor(1000 + Math.random() * 9000).toString();
+      
+      const { data, error } = await supabase.functions.invoke('send-whatsapp-otp', {
+        body: { phone: fullPhone, otp }
+      });
+
+      if (error) {
+        console.error("Functions Invocation Error:", error);
+        throw new Error("Server error sending WhatsApp code. Please check your Supabase deployment.");
+      }
+
+      if (data && data.success === false) {
+        console.error("Meta API Error:", data.error);
+        throw new Error("WhatsApp delivery failed. Ensure your WhatsApp number is verified in Meta.");
+      }
+
+      router.push(`/(home)/verify-otp?phone=${encodeURIComponent(fullPhone)}&sentOtp=${otp}&full_name=${encodeURIComponent(fullName.trim())}`);
+    } catch (err: any) {
+      console.error(err);
+      Alert.alert("Error", err.message || "Something went wrong verifying your account status.");
     } finally {
       setLoading(false);
     }
@@ -129,7 +159,6 @@ export default function SignupScreen() {
     router.back();
   };
 
-  const isFormValid = fullName.trim().length > 0 && phoneNumber.trim().length > 0 && !loading;
 
   return (
     <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
@@ -178,25 +207,18 @@ export default function SignupScreen() {
                 maxLength={60}
                 allowFontScaling={true}
                 returnKeyType="next"
+                allowFontScaling={true}
               />
             </View>
-          </View>
 
-          {/* ── Phone Input ── */}
-          <View style={styles.inputSection}>
             <View style={styles.phoneInputContainer}>
-              {/* Country Code */}
               <View style={styles.countryCode}>
                 <Text style={styles.countryCodeText}>+252</Text>
               </View>
-
-              {/* Vertical Separator */}
               <View style={styles.separator} />
-
-              {/* Phone Number Field */}
               <TextInput
                 style={styles.phoneInput}
-                placeholder="Enter your phone number"
+                placeholder="Phone number"
                 placeholderTextColor="#AAAAAA"
                 keyboardType="phone-pad"
                 value={phoneNumber}
@@ -223,7 +245,7 @@ export default function SignupScreen() {
               <ActivityIndicator color="#FFFFFF" size="small" />
             ) : (
               <Text style={styles.continueButtonText} allowFontScaling={true}>
-                Create Account
+                Send Code via WhatsApp
               </Text>
             )}
           </TouchableOpacity>

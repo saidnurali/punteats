@@ -5,7 +5,10 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": ["punteats", "com.googleusercontent.apps.964294676461-l1sggb0f3cuq8ard65ihhskenie7irlb"],
+    "scheme": [
+      "punteats",
+      "com.googleusercontent.apps.964294676461-l1sggb0f3cuq8ard65ihhskenie7irlb"
+    ],
     "userInterfaceStyle": "automatic",
     "ios": {
       "bundleIdentifier": "com.puntland.punteats",
@@ -55,7 +58,8 @@
           "organization": "___YOUR_ORG_SLUG___"
         }
       ],
-      "@sentry/react-native"
+      "@sentry/react-native",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true,

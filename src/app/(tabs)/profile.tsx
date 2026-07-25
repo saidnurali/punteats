@@ -19,37 +19,32 @@ import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { supabase } from "../../lib/supabase";
 import { useCart } from "../../lib/CartContext";
-import Animated, { FadeIn } from "react-native-reanimated";
+import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
 
 export default function ProfileScreen() {
   const router = useRouter();
   const { clearCart } = useCart();
 
   // ── Profile State ──
-  const [displayName, setDisplayName] = useState("Loading...");
+  const [displayName, setDisplayName] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
 
   React.useEffect(() => {
-    // 1. Load from AsyncStorage first
-    AsyncStorage.getItem("@puntgo_user_profile").then((stored) => {
+    // Load from local WhatsApp OTP session
+    AsyncStorage.getItem('puntgo_user_session').then((stored) => {
       if (stored) {
         const p = JSON.parse(stored);
-        if (p.displayName) setDisplayName(p.displayName);
-        if (p.phone) setPhone(p.phone);
-        if (p.email) setEmail(p.email);
-        if (p.avatarUri) setAvatarUri(p.avatarUri);
-      }
-    });
-
-    // 2. Load from Supabase Auth
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      if (user) {
-        setDisplayName(user.user_metadata?.full_name || user.email?.split('@')[0] || "Garowe User");
-        setPhone(user.user_metadata?.phone || "+252 90 7123456");
-        setEmail(user.email || "garowe.user@puntgo.so");
-        setAvatarUri(user.user_metadata?.avatar_url || null);
+        setDisplayName(p.full_name || "Customer");
+        setPhone(p.phone_number || "+252");
+        setEmail(p.email || "No email linked");
+        setAvatarUri(p.avatar_url || null);
+      } else {
+        // Fallback for demo
+        setDisplayName("Garowe User");
+        setPhone("+252 90 7123456");
+        setEmail("garowe.user@puntgo.so");
       }
     });
   }, []);
@@ -170,6 +165,7 @@ export default function ProfileScreen() {
   const handleLogout = async () => {
     try {
       (global as any).__BYPASS_AUTH__ = false;
+      await AsyncStorage.removeItem('puntgo_user_session');
       await supabase.auth.signOut();
       clearCart();
       router.replace("/(home)/login");
@@ -194,6 +190,7 @@ export default function ProfileScreen() {
           onPress: async () => {
             try {
               (global as any).__BYPASS_AUTH__ = false;
+              await AsyncStorage.removeItem('puntgo_user_session');
               await supabase.auth.signOut();
               clearCart();
               router.replace("/(home)/login");
@@ -208,7 +205,7 @@ export default function ProfileScreen() {
   };
 
   return (
-    <Animated.View style={{ flex: 1 }} entering={FadeIn.duration(300)}>
+    <Animated.View style={{ flex: 1 }} entering={FadeInDown.duration(400)}>
       <SafeAreaView style={styles.container} edges={["top"]}>
         <StatusBar barStyle="dark-content" />
 
@@ -241,7 +238,7 @@ export default function ProfileScreen() {
             </View>
           </TouchableOpacity>
 
-          <Text style={styles.displayName}>{displayName}</Text>
+          <Text style={styles.displayName}>{displayName || " "}</Text>
           <Text style={styles.phoneNumber}>{phone}</Text>
 
           <TouchableOpacity

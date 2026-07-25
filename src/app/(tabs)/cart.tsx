@@ -14,7 +14,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useCart } from "@/lib/CartContext";
-import Animated, { FadeIn } from "react-native-reanimated";
+import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
 
 export default function CartScreen() {
   const router = useRouter();
@@ -88,8 +88,8 @@ export default function CartScreen() {
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}
           >
-            {cartItems.map((item) => (
-              <View key={item.id} style={styles.card}>
+            {cartItems.map((item, index) => (
+              <Animated.View key={item.id} style={styles.card} entering={FadeInDown.duration(400).delay(index * 100)}>
                 {/* Left: Food thumbnail */}
                 <Image
                   source={{ uri: item.image }}
@@ -140,7 +140,7 @@ export default function CartScreen() {
                     </View>
                   </View>
                 </View>
-              </View>
+              </Animated.View>
             ))}
 
             {/* Extra spacing for bottom bar */}
