@@ -12,16 +12,19 @@ import {
 import { Image } from "expo-image";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import { useCart } from "@/lib/CartContext";
 import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
 
 export default function CartScreen() {
   const router = useRouter();
+  const { returnTo } = useLocalSearchParams();
   const { cartItems, totalPrice, updateQuantity, removeFromCart, clearCart } = useCart();
 
   const handleBack = () => {
-    if (router.canGoBack()) {
+    if (returnTo) {
+      router.push(returnTo as string);
+    } else if (router.canGoBack()) {
       router.back();
     } else {
       router.push("/(tabs)");

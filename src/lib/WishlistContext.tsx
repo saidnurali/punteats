@@ -1,7 +1,8 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Platform } from "react-native";
-import { Product } from "@/lib/products";
+import { Product, mapFoodItemToProduct } from "@/lib/products";
+import { supabase } from "@/lib/supabase";
 
 interface WishlistContextType {
   wishlistItems: Product[];
@@ -47,6 +48,30 @@ export const WishlistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   useEffect(() => {
     const loadWishlist = async () => {
       try {
+        const storedSession = await safeStorage.getItem("puntgo_user_session");
+        if (storedSession) {
+          const user = JSON.parse(storedSession);
+          if (user?.id) {
+            const { data } = await supabase
+              .from('wishlist')
+              .select('id, product:food_items(*, restaurant:restaurants(name))')
+              .eq('user_id', user.id);
+              
+            if (data) {
+              const fetchedItems = data
+                .map((d: any) => d.product ? mapFoodItemToProduct(d.product) : null)
+                .filter(Boolean);
+              
+              if (fetchedItems.length > 0) {
+                setWishlistItems(fetchedItems);
+                setIsLoaded(true);
+                return;
+              }
+            }
+          }
+        }
+        
+        // Fallback to local
         const stored = await safeStorage.getItem(WISHLIST_STORAGE_KEY);
         if (stored) setWishlistItems(JSON.parse(stored));
       } catch (error) {} finally {
@@ -68,12 +93,33 @@ export const WishlistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const isWishlisted = (id: string) => wishlistItems.some((item) => item.id === id);
 
-  const toggleWishlist = (product: Product) => {
+  const toggleWishlist = async (product: Product) => {
+    // Optimistic Update
     setWishlistItems((prev) => {
       const exists = prev.some((item) => item.id === product.id);
       if (exists) return prev.filter((item) => item.id !== product.id);
       return [...prev, product];
     });
+
+    // Supabase Sync
+    try {
+      const storedSession = await safeStorage.getItem("puntgo_user_session");
+      if (storedSession) {
+        const user = JSON.parse(storedSession);
+        if (user?.id) {
+          const exists = wishlistItems.some((item) => item.id === product.id);
+          if (exists) {
+            // It was there, so we are removing it
+            await supabase.from('wishlist').delete().eq('user_id', user.id).eq('product_id', product.id);
+          } else {
+            // It was not there, so we are adding it
+            await supabase.from('wishlist').insert({ user_id: user.id, product_id: product.id });
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("Wishlist sync error:", err);
+    }
   };
 
   const clearWishlist = () => setWishlistItems([]);

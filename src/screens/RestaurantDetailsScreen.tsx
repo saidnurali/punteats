@@ -117,12 +117,11 @@ export default function RestaurantDetailsScreen() {
       }
 
       // 2. Fetch food items linked specifically to this restaurant ID
-      const restaurantName = restData?.name || "Restaurant";
       const { data: foods } = await supabase
         .from("food_items")
         .select("*")
-        .or(`restaurant_id.eq.${id},restaurant_name.ilike.%${restaurantName}%`);
-
+        .eq("restaurant_id", id);
+        
       if (foods && foods.length > 0) {
         const mappedFoods = foods.map(mapFoodItemToProduct);
         setFoodItems(mappedFoods);

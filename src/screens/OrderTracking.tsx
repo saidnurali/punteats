@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from "react-native-maps";
 import {
   View,
   Text,
@@ -16,23 +17,36 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { getStoredOrders, LiveOrder } from "@/lib/ordersStore";
 import { supabase } from "@/lib/supabase";
-import { OrderCardSkeleton } from "@/components/SkeletonLoader";
+
+// Garowe Default Locations for Testing
+const GAROWE_RESTAURANT = { latitude: 8.4060, longitude: 48.4810 }; // Near Barxada
+const GAROWE_CUSTOMER = { latitude: 8.4005, longitude: 48.4850 };   // Destination
+const GAROWE_SCOOTER = { latitude: 8.4030, longitude: 48.4830 };    // Live Scooter
+
+const calculateHaversineKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+  const R = 6371; // Radius of Earth in KM
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return Number((R * c).toFixed(2));
+};
 
 export default function OrderTrackingScreen() {
   const router = useRouter();
-  const { id: queryId, orderId, status: initialStatus, totalAmount, restaurantName } = useLocalSearchParams<any>();
+  const { id: queryId, orderId, initialStatus } = useLocalSearchParams<{ id?: string, orderId?: string, initialStatus?: string }>();
   const activeId = orderId || queryId;
 
-  // 1. INSTANT NAVIGATION: Use initial params if available
-  const initialOrder = (initialStatus || totalAmount) ? {
-    id: activeId,
-    status: initialStatus,
-    total: totalAmount,
-    restaurant: restaurantName,
-  } : null;
-
-  const [order, setOrder] = useState<any>(initialOrder);
-  const [loading, setLoading] = useState(!initialOrder);
+  const [order, setOrder] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [driverLocation, setDriverLocation] = useState<{latitude: number, longitude: number, heading: number} | null>(null);
+  const [distanceKm, setDistanceKm] = useState<number>(0);
+  const mapRef = useRef<MapView>(null);
 
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
@@ -60,36 +74,44 @@ export default function OrderTrackingScreen() {
       const isUUID = activeId.length === 36 && activeId.includes('-');
       const normalizedNumber = '#' + activeId.replace(/^#+/, '');
 
-      // 2. SINGLE-QUERY DATABASE FETCHING
-      let query = supabase.from('orders').select('*, order_items(*, product:products(*)), restaurant:restaurants(*)');
+      let query = supabase.from('orders').select('*');
       if (isUUID) {
         query = query.eq('id', activeId);
       } else {
         query = query.or(`order_number.eq.${normalizedNumber},order_number.eq.${activeId}`);
       }
 
-      try {
-        const { data, error } = await query.single();
-        if (error) {
-          console.warn("loadOrder Supabase Error:", error);
+      const { data, error } = await query.single();
+      if (data) {
+        setOrder(data);
+        if (data.driver_latitude && data.driver_longitude) {
+          setDriverLocation({
+            latitude: Number(data.driver_latitude),
+            longitude: Number(data.driver_longitude),
+            heading: Number(data.driver_heading || 0)
+          });
         }
-        if (data) {
-          setOrder((prev: any) => ({ ...prev, ...data }));
-        }
-      } catch (err) {
-        console.warn("loadOrder unexpected error:", err);
-      } finally {
-        setLoading(false);
       }
+      setLoading(false);
     }
     loadOrder();
 
-    // 3. NON-BLOCKING REALTIME SUBSCRIPTION
-    const channelTopic = `order_${activeId}_${Math.random().toString(36).substring(2, 9)}`;
-    const channel = supabase.channel(channelTopic)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'orders', filter: `id=eq.${activeId}` }, 
+    // Subscribe to realtime status changes
+    const channel = supabase.channel(`order_${activeId}`)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'orders' }, 
         (payload) => {
-          setOrder((prev: any) => ({ ...prev, ...payload.new }));
+          const newOrder = payload.new as any;
+          const normalizedNumber = '#' + activeId.replace(/^#+/, '');
+          if (newOrder.id === activeId || newOrder.order_number === activeId || newOrder.order_number === normalizedNumber) {
+            setOrder((prev: any) => ({ ...prev, ...newOrder }));
+            if (newOrder.driver_latitude && newOrder.driver_longitude) {
+              setDriverLocation({
+                latitude: Number(newOrder.driver_latitude),
+                longitude: Number(newOrder.driver_longitude),
+                heading: Number(newOrder.driver_heading || 0)
+              });
+            }
+          }
         }
       ).subscribe();
 
@@ -121,11 +143,9 @@ export default function OrderTrackingScreen() {
     switch (status.toLowerCase()) {
       case "pending": return 0;
       case "preparing": return 1;
-      case "out for delivery": 
-      case "on the way": return 2;
-      case "delivered": 
-      case "completed": return 3;
-      case "cancelled": 
+      case "out for delivery": return 2;
+      case "delivered": return 3;
+      case "cancelled": return -1;
       case "rejected": return -1;
       default: return 0;
     }
@@ -134,47 +154,35 @@ export default function OrderTrackingScreen() {
   const currentStep = getStepIndex(order?.status);
   const orderTimeStr = order ? new Date(order.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "10:30 AM";
 
-  // 4. COMPACT SKELETON LOADER
-  if (loading) {
-    return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: '#F9FAFB' }} edges={['top']}>
-        <StatusBar barStyle="dark-content" />
-        <View style={styles.header}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.replace('/(tabs)/orders')}>
-            <Ionicons name="arrow-back" size={24} color="#1A1A1A" />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Order Details</Text>
-          <View style={styles.headerRightPlaceholder} />
-        </View>
-        <ScrollView style={{ padding: 20 }}>
-          <OrderCardSkeleton />
-        </ScrollView>
-      </SafeAreaView>
-    );
-  }
+  const destLat = Number(order?.delivery_lat || order?.delivery_latitude || GAROWE_CUSTOMER.latitude);
+  const destLng = Number(order?.delivery_lng || order?.delivery_longitude || GAROWE_CUSTOMER.longitude);
+  const destination = { latitude: destLat, longitude: destLng };
 
-  if (!order) {
-    return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: '#F9FAFB' }}>
-        <StatusBar barStyle="dark-content" />
-        <View style={styles.header}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.replace('/(tabs)/orders')}>
-            <Ionicons name="arrow-back" size={24} color="#1A1A1A" />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Order Not Found</Text>
-          <View style={styles.headerRightPlaceholder} />
-        </View>
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
-          <Ionicons name="alert-circle-outline" size={64} color="#9CA3AF" />
-          <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#374151', marginTop: 16 }}>Order not found</Text>
-          <Text style={{ textAlign: 'center', color: '#6B7280', marginTop: 8 }}>We couldn't find the details for this order. It may have been removed.</Text>
-          <TouchableOpacity style={{ marginTop: 24, backgroundColor: '#1B7D3C', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 24 }} onPress={() => router.replace('/(tabs)/orders')}>
-            <Text style={{ color: '#FFFFFF', fontWeight: 'bold' }}>Back to Orders</Text>
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
-    );
-  }
+  const restLat = Number(order?.restaurant_lat || order?.restaurant_latitude || GAROWE_RESTAURANT.latitude);
+  const restLng = Number(order?.restaurant_lng || order?.restaurant_longitude || GAROWE_RESTAURANT.longitude);
+
+  const liveDriver = driverLocation || { ...GAROWE_SCOOTER, heading: 45 };
+
+  useEffect(() => {
+    if (order) {
+      const km = calculateHaversineKm(liveDriver.latitude, liveDriver.longitude, destLat, destLng);
+      setDistanceKm(km);
+
+      const coordinatesToFit = [
+        { latitude: liveDriver.latitude, longitude: liveDriver.longitude },
+        { latitude: destLat, longitude: destLng },
+        { latitude: restLat, longitude: restLng }
+      ];
+
+      mapRef.current?.fitToCoordinates(
+        coordinatesToFit,
+        {
+          edgePadding: { top: 60, right: 60, bottom: 60, left: 60 },
+          animated: true
+        }
+      );
+    }
+  }, [driverLocation, order]);
 
   // 🚨 IF ORDER IS CANCELLED / REJECTED:
   if (order?.status?.toLowerCase() === 'cancelled' || order?.status?.toLowerCase() === 'rejected') {
@@ -214,7 +222,12 @@ export default function OrderTrackingScreen() {
   }
 
   const fallbackId = activeId || "PG123456";
-  const displayOrderId = order?.order_number?.startsWith('#') ? order.order_number : `#${order?.order_number || fallbackId.replace(/^#+/, '')}`;
+  let displayOrderId = order?.order_number || fallbackId;
+  // Ensure it starts with exactly one #
+  if (!displayOrderId.startsWith('#')) {
+    displayOrderId = '#' + displayOrderId;
+  }
+  displayOrderId = displayOrderId.replace(/^#+/, '#'); // Fixes ##PG123456 issue
 
   // 🚨 IF ORDER IS DELIVERED:
   if (order?.status?.toLowerCase() === 'delivered') {
@@ -379,44 +392,69 @@ export default function OrderTrackingScreen() {
             </View>
 
             {/* 4. LIVE MAP CONTAINER */}
-            <View style={styles.mapContainer}>
-              {/* Simulated Street Grid & Route Graphic */}
-              <View style={styles.mapStreetGrid}>
-                <View style={[styles.gridLineHorizontal, { top: 40 }]} />
-                <View style={[styles.gridLineHorizontal, { top: 100 }]} />
-                <View style={[styles.gridLineHorizontal, { top: 160 }]} />
-                <View style={[styles.gridLineVertical, { left: 60 }]} />
-                <View style={[styles.gridLineVertical, { left: 160 }]} />
-                <View style={[styles.gridLineVertical, { left: 260 }]} />
-
-                {/* Diagonal Route Line from Restaurant (top right) to Customer (bottom left) */}
-                <View style={styles.routeLineDiag} />
-
-                {/* Restaurant Pin (Top Right) */}
-                <View style={styles.pinRestaurant}>
-                  <Ionicons name="restaurant" size={14} color="#FFFFFF" />
-                </View>
-
-                {/* Customer Pin (Bottom Left) */}
-                <View style={styles.pinCustomer}>
-                  <View style={styles.pinCustomerInner} />
-                </View>
-
-                {/* Moving Driver Avatar Pin */}
-                <Animated.View
-                  style={[
-                    styles.driverAvatarPin,
-                    {
-                      transform: [
-                        { scale: pulseAnim },
-                        { translateX: currentStep >= 3 ? -10 : 20 },
-                        { translateY: currentStep >= 3 ? 10 : -20 },
-                      ],
-                    },
-                  ]}
+            <View style={[styles.mapContainer, { height: 320 }]}>
+              <MapView
+                ref={mapRef}
+                provider={PROVIDER_GOOGLE}
+                showsCompass
+                showsUserLocation
+                style={{ flex: 1 }}
+                initialRegion={{
+                  latitude: destLat,
+                  longitude: destLng,
+                  latitudeDelta: 0.015,
+                  longitudeDelta: 0.015,
+                }}
+              >
+                {/* 1. RESTAURANT / PICKUP MARKER */}
+                <Marker
+                  coordinate={{ latitude: restLat, longitude: restLng }}
+                  title={order?.restaurant_name || "Restaurant"}
                 >
-                  <Text style={{ fontSize: 20 }}>🧑🏾</Text>
-                </Animated.View>
+                  <View style={styles.restaurantPin}>
+                    <Ionicons color="#FFFFFF" name="restaurant" size={18} />
+                  </View>
+                </Marker>
+
+                {/* 2. CUSTOMER / DESTINATION MARKER */}
+                <Marker coordinate={destination} title="Delivery Destination">
+                  <View style={styles.customerPin}>
+                    <Ionicons name="home" size={16} color="#FFFFFF" />
+                  </View>
+                </Marker>
+
+                {/* 3. LIVE DRIVER SCOOTER MARKER */}
+                <Marker
+                  coordinate={{ latitude: liveDriver.latitude, longitude: liveDriver.longitude }}
+                  anchor={{ x: 0.5, y: 0.5 }}
+                  rotation={liveDriver.heading}
+                  title={order?.driver_name || "Driver"}
+                >
+                  <View style={styles.scooterPin}>
+                    <Ionicons color="#1B7D3C" name="bicycle" size={24} />
+                  </View>
+                </Marker>
+
+                {/* REALTIME POLYLINE ROUTE FROM DRIVER TO DESTINATION */}
+                <Polyline
+                  coordinates={[
+                    { latitude: liveDriver.latitude, longitude: liveDriver.longitude },
+                    { latitude: destLat, longitude: destLng }
+                  ]}
+                  strokeColor="#1B7D3C"
+                  strokeWidth={4}
+                />
+              </MapView>
+
+              {/* FLOATING LIVE KM CARD */}
+              <View style={styles.floatingCard}>
+                <View>
+                  <Text style={styles.cardTitle}>{distanceKm} km away</Text>
+                  <Text style={styles.cardSub}>
+                    Estimated Arrival: ~{Math.max(1, Math.ceil(distanceKm * 2.5))} mins
+                  </Text>
+                </View>
+                <Text style={styles.fareText}>${order?.total_amount || order?.total || order?.total_price || '0.00'}</Text>
               </View>
             </View>
 
@@ -917,4 +955,47 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#4B5563",
   },
+  restaurantPin: {
+    backgroundColor: '#F5A623', 
+    padding: 8, 
+    borderRadius: 20,
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+  },
+  customerPin: {
+    backgroundColor: '#10B981', 
+    padding: 8, 
+    borderRadius: 20,
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+  },
+  scooterPin: {
+    backgroundColor: '#FFFFFF',
+    padding: 8,
+    borderRadius: 20,
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOpacity: 0.25,
+    shadowRadius: 5,
+    borderWidth: 2,
+    borderColor: '#10B981',
+  },
+  floatingCard: {
+    position: 'absolute',
+    bottom: 16,
+    left: 16,
+    right: 16,
+    backgroundColor: '#FFFFFF',
+    padding: 16,
+    borderRadius: 16,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+  },
+  cardTitle: { fontSize: 16, fontWeight: 'bold', color: '#111827' },
+  cardSub: { fontSize: 12, color: '#6B7280', marginTop: 2 },
+  fareText: { fontSize: 18, fontWeight: 'bold', color: '#10B981' },
 });

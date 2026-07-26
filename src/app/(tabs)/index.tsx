@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   View,
   Text,
@@ -7,9 +7,11 @@ import {
   FlatList,
   TextInput,
   TouchableOpacity,
+  Pressable,
   Dimensions,
   Platform,
   StatusBar,
+  Modal,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Image } from "expo-image";
@@ -17,7 +19,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import Animated, { FadeInDown, FadeInRight, FadeIn } from "react-native-reanimated";
 import { useRouter } from "expo-router";
-import { PRODUCTS_DATA, Product, fetchProductsFromSupabase } from "@/lib/products";
+import { PRODUCTS_DATA, Product, fetchProductsFromSupabase, mapFoodItemToProduct } from "@/lib/products";
 import { supabase } from "@/lib/supabase";
 import { useCart } from "@/lib/CartContext";
 import { useWishlist } from "@/lib/WishlistContext";
@@ -83,15 +85,146 @@ const INITIAL_RESTAURANTS: any[] = [];
 const DELIVERY_SCOOTER = "https://wsrv.nl/?url=pngimg.com/uploads/motorcycle/motorcycle_PNG3162.png&output=png";
 
 // ─── Component ───────────────────────────────────────────────────────────────
+
+const HeroCarousel = () => {
+  const router = useRouter();
+  const [activeSlide, setActiveSlide] = React.useState(0);
+  const scrollViewRef = React.useRef<ScrollView>(null);
+  const isDragging = React.useRef(false);
+
+  React.useEffect(() => {
+    const timer = setInterval(() => {
+      if (isDragging.current) return;
+      const nextSlide = (activeSlide + 1) % HERO_SLIDES.length;
+      scrollViewRef.current?.scrollTo({ x: nextSlide * (width - 40), animated: true });
+    }, 3500);
+    return () => clearInterval(timer);
+  }, [activeSlide]);
+
+  const handleScroll = (e: any) => {
+    const slide = Math.round(e.nativeEvent.contentOffset.x / (width - 40));
+    if (slide !== activeSlide && slide >= 0 && slide < HERO_SLIDES.length) {
+      setActiveSlide(slide);
+    }
+  };
+
+  return (
+    <Animated.View style={styles.heroBannerContainer}>
+      <ScrollView
+        ref={scrollViewRef}
+        horizontal
+        pagingEnabled
+        showsHorizontalScrollIndicator={false}
+        onScroll={handleScroll}
+        scrollEventThrottle={16}
+        onScrollBeginDrag={() => { isDragging.current = true; }}
+        onScrollEndDrag={() => { isDragging.current = false; }}
+        decelerationRate="fast"
+        snapToInterval={width - 40}
+        style={styles.heroScrollView}
+      >
+        {HERO_SLIDES.map((slide) => (
+          <View key={slide.id} style={styles.heroBannerSlide}>
+            <View style={styles.heroTextContainer}>
+              <View style={styles.fastDeliveryPill}>
+                {slide.tagIconType === "mci" ? (
+                  <MaterialCommunityIcons name={slide.tagIconName as any} size={13} color="#34D399" />
+                ) : (
+                  <Ionicons name={slide.tagIconName as any} size={13} color="#34D399" />
+                )}
+                <Text style={styles.fastDeliveryLabel}>{slide.tag}</Text>
+              </View>
+
+              <Text style={styles.heroTitle}>{slide.title}</Text>
+              <Text style={styles.heroSubtitle}>{slide.subtitle}</Text>
+
+              <TouchableOpacity style={styles.orderNowBtn} activeOpacity={0.85} onPress={() => router.push('/categories')}>
+                <Text style={styles.orderNowText}>{slide.buttonText}</Text>
+                <View style={styles.orderNowArrow}>
+                  <Ionicons name="arrow-forward" size={13} color="#FFFFFF" />
+                </View>
+              </TouchableOpacity>
+            </View>
+
+            <Ionicons name="leaf" size={16} color="#34D399" style={styles.leafTop} />
+            <Ionicons name="leaf" size={12} color="#10B981" style={styles.leafBottom} />
+
+            <Image source={slide.imageSource} style={styles[slide.imageStyleKey as keyof typeof styles] as any} contentFit="contain" cachePolicy="memory-disk" transition={200} />
+          </View>
+        ))}
+      </ScrollView>
+
+      <View style={styles.dots}>
+        {HERO_SLIDES.map((_, index) => (
+          <View key={index} style={[styles.dot, activeSlide === index && styles.dotActive]} />
+        ))}
+      </View>
+    </Animated.View>
+  );
+};
+
+const FilterModal = ({ visible, onClose, sortBy, setSortBy, priceRange, setPriceRange, onApply, onReset }: any) => {
+  return (
+    <Modal visible={visible} animationType="slide" transparent>
+      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
+        <View style={{ backgroundColor: '#FFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, minHeight: 400 }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+            <Text style={{ fontSize: 20, fontWeight: 'bold', color: '#1A1A1A' }}>Sort & Filter</Text>
+            <TouchableOpacity onPress={onClose}><Ionicons name="close" size={24} color="#1A1A1A"/></TouchableOpacity>
+          </View>
+          
+          <Text style={{ fontSize: 16, fontWeight: '600', color: '#1A1A1A', marginBottom: 12 }}>Sort By</Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 24 }}>
+            {['Popularity', 'Rating', 'Delivery Time'].map(opt => (
+               <TouchableOpacity 
+                 key={opt} 
+                 style={{ paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, borderWidth: 1, borderColor: sortBy === opt ? '#1B7D3C' : '#E5E7EB', backgroundColor: sortBy === opt ? '#F0FDF4' : '#FFF' }} 
+                 onPress={() => setSortBy(opt)}
+               >
+                 <Text style={{ color: sortBy === opt ? '#1B7D3C' : '#4B5563', fontWeight: sortBy === opt ? '600' : '400' }}>{opt}</Text>
+               </TouchableOpacity>
+            ))}
+          </View>
+
+          <Text style={{ fontSize: 16, fontWeight: '600', color: '#1A1A1A', marginBottom: 12 }}>Price Range</Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 40 }}>
+            {['$', '$$', '$$$'].map(opt => (
+               <TouchableOpacity 
+                 key={opt} 
+                 style={{ paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, borderWidth: 1, borderColor: priceRange === opt ? '#1B7D3C' : '#E5E7EB', backgroundColor: priceRange === opt ? '#F0FDF4' : '#FFF' }} 
+                 onPress={() => setPriceRange(opt)}
+               >
+                 <Text style={{ color: priceRange === opt ? '#1B7D3C' : '#4B5563', fontWeight: priceRange === opt ? '600' : '400' }}>{opt}</Text>
+               </TouchableOpacity>
+            ))}
+          </View>
+          
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 16, marginTop: 'auto' }}>
+             <TouchableOpacity style={{ flex: 1, paddingVertical: 14, borderRadius: 12, backgroundColor: '#F3F4F6', alignItems: 'center' }} onPress={onReset}>
+                <Text style={{ color: '#4B5563', fontWeight: 'bold', fontSize: 16 }}>Reset All</Text>
+             </TouchableOpacity>
+             <TouchableOpacity style={{ flex: 1, paddingVertical: 14, borderRadius: 12, backgroundColor: '#1B7D3C', alignItems: 'center' }} onPress={onApply}>
+                <Text style={{ color: '#FFF', fontWeight: 'bold', fontSize: 16 }}>Apply Filters</Text>
+             </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 export default function HomeScreen() {
   const router = useRouter();
   const { addToCart, cartItems, updateQuantity, removeFromCart } = useCart();
   const { isWishlisted, toggleWishlist } = useWishlist();
-  const [searchQuery, setSearchQuery]           = useState("");
-  const [selectedCategory, setSelectedCategory] = useState("All");
-  const [activeHeroIndex, setActiveHeroIndex]   = useState(0);
+  const [selectedCategoryName, setSelectedCategoryName] = useState("All");
+  const [selectedCategoryId, setSelectedCategoryId] = useState("ALL");
 
-  const [products, setProducts] = useState<Product[]>([]);
+  const [isFilterModalVisible, setIsFilterModalVisible] = useState(false);
+  const [sortBy, setSortBy] = useState("Popularity");
+  const [priceRange, setPriceRange] = useState("");
+
+  const [allDishes, setAllDishes] = useState<Product[]>([]);
   const [categoriesList, setCategoriesList] = useState<any[]>(CATEGORIES);
   const [restaurantsList, setRestaurantsList] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -104,12 +237,11 @@ export default function HomeScreen() {
         let hasCache = false;
         if (cachedRest && cachedProd && cachedProd !== '[]') {
           setRestaurantsList(JSON.parse(cachedRest));
-          setProducts(JSON.parse(cachedProd));
+          setAllDishes(JSON.parse(cachedProd));
           hasCache = true;
           setIsLoading(false); // Instantly show cached UI
         }
-        
-        // Fetch fresh data silently in background
+
         const { data: rest } = await supabase.from('restaurants').select('*').limit(20);
         const fetchedProducts = await fetchProductsFromSupabase();
         
@@ -131,7 +263,7 @@ export default function HomeScreen() {
           AsyncStorage.setItem('@cached_home_restaurants', JSON.stringify(mappedRests)).catch(()=>null);
         }
         if (fetchedProducts && fetchedProducts.length > 0) {
-          setProducts(fetchedProducts);
+          setAllDishes(fetchedProducts);
           AsyncStorage.setItem('@cached_home_products', JSON.stringify(fetchedProducts)).catch(()=>null);
         }
         setIsLoading(false);
@@ -157,94 +289,60 @@ export default function HomeScreen() {
     };
   }, []);
 
-  const filteredFoods = selectedCategory === 'All' 
-    ? products 
-    : products.filter(item => 
-        item.category?.trim().toLowerCase() === selectedCategory.trim().toLowerCase()
+  const categoriesWithItems = useMemo(() => {
+    return CATEGORIES.filter(cat => {
+      if (cat.id === '0' || cat.id === 'ALL') return true;
+      return allDishes.some(dish => 
+        dish.category_id === cat.id ||
+        dish.category?.toLowerCase().includes(cat.name.toLowerCase()) ||
+        dish.name?.toLowerCase().includes(cat.name.toLowerCase())
+      );
+    });
+  }, [allDishes]);
+
+  let filteredFoods = (selectedCategoryId === 'ALL' || selectedCategoryId === '0' || selectedCategoryName.toLowerCase() === 'all')
+    ? allDishes 
+    : allDishes.filter(dish => 
+        dish.category_id === selectedCategoryId ||
+        (dish.category && dish.category.toLowerCase().includes(selectedCategoryName.toLowerCase())) ||
+        (dish.name && dish.name.toLowerCase().includes(selectedCategoryName.toLowerCase()))
       );
 
-  const getCategoryCount = (categoryName: string) => {
-    if (categoryName === 'All') return products.length;
-    return products.filter(
-      item => item.category?.trim().toLowerCase() === categoryName.trim().toLowerCase()
-    ).length;
-  };
+  if (priceRange === '$') {
+     filteredFoods = filteredFoods.filter(item => item.price < 5);
+  } else if (priceRange === '$$') {
+     filteredFoods = filteredFoods.filter(item => item.price >= 5 && item.price <= 15);
+  } else if (priceRange === '$$$') {
+     filteredFoods = filteredFoods.filter(item => item.price > 15);
+  }
 
-  const activeCategories = CATEGORIES.filter(cat => getCategoryCount(cat.name) > 0);
+  if (sortBy === 'Rating') {
+     filteredFoods.sort((a, b) => parseFloat(b.rating || '0') - parseFloat(a.rating || '0'));
+  } else if (sortBy === 'Delivery Time') {
+     filteredFoods.sort((a, b) => parseInt(a.deliveryTime || '0') - parseInt(b.deliveryTime || '0'));
+  }
+
+  const activeCategories = categoriesList;
 
 
   const renderHeader = () => (
     <>
       {/* ── Search ── */}
-      <Animated.View style={styles.searchRow} entering={FadeInDown.duration(400).delay(40)}>
-        <View style={styles.searchBox}>
+      <Animated.View style={styles.searchRow}>
+        <TouchableOpacity style={styles.searchBox} activeOpacity={0.9} onPress={() => router.push('/search')}>
           <Ionicons name="search" size={20} color="#9CA3AF" style={{ marginRight: 10 }} />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search food, restaurants, dishes..."
-            placeholderTextColor="#9CA3AF"
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-          />
-        </View>
-        <TouchableOpacity style={styles.filterBtn} activeOpacity={0.7}>
+          <Text style={{ color: "#9CA3AF", fontSize: 15, flex: 1 }}>Search food, restaurants, dishes...</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.filterBtn} activeOpacity={0.7} onPress={() => setIsFilterModalVisible(true)}>
           <Ionicons name="options-outline" size={20} color="#1A1A1A" />
         </TouchableOpacity>
       </Animated.View>
 
       {/* ── Hero Banner ── */}
-      <Animated.View style={styles.heroBannerContainer} entering={FadeInDown.duration(400).delay(80)}>
-        <ScrollView
-          horizontal
-          pagingEnabled
-          showsHorizontalScrollIndicator={false}
-          onScroll={(e) => {
-            const slide = Math.round(e.nativeEvent.contentOffset.x / (width - 40));
-            setActiveHeroIndex(slide);
-          }}
-          scrollEventThrottle={16}
-          style={styles.heroScrollView}
-        >
-          {HERO_SLIDES.map((slide, index) => (
-            <View key={slide.id} style={styles.heroBannerSlide}>
-              <View style={styles.heroTextContainer}>
-                <View style={styles.fastDeliveryPill}>
-                  {slide.tagIconType === "mci" ? (
-                    <MaterialCommunityIcons name={slide.tagIconName as any} size={13} color="#34D399" />
-                  ) : (
-                    <Ionicons name={slide.tagIconName as any} size={13} color="#34D399" />
-                  )}
-                  <Text style={styles.fastDeliveryLabel}>{slide.tag}</Text>
-                </View>
-
-                <Text style={styles.heroTitle}>{slide.title}</Text>
-                <Text style={styles.heroSubtitle}>{slide.subtitle}</Text>
-
-                <TouchableOpacity style={styles.orderNowBtn} activeOpacity={0.85}>
-                  <Text style={styles.orderNowText}>{slide.buttonText}</Text>
-                  <View style={styles.orderNowArrow}>
-                    <Ionicons name="arrow-forward" size={13} color="#FFFFFF" />
-                  </View>
-                </TouchableOpacity>
-              </View>
-
-              <Ionicons name="leaf" size={16} color="#34D399" style={styles.leafTop} />
-              <Ionicons name="leaf" size={12} color="#10B981" style={styles.leafBottom} />
-
-              <Image source={slide.imageSource} style={styles[slide.imageStyleKey]} contentFit="contain" cachePolicy="memory-disk" transition={200} />
-            </View>
-          ))}
-        </ScrollView>
-
-        <View style={styles.dots}>
-          {HERO_SLIDES.map((_, index) => (
-            <View key={index} style={[styles.dot, activeHeroIndex === index && styles.dotActive]} />
-          ))}
-        </View>
-      </Animated.View>
+      <HeroCarousel />
 
       {/* ── Dual Service Cards ── */}
-      <Animated.View style={styles.cardsRow} entering={FadeInDown.duration(400).delay(140)}>
+      <Animated.View style={styles.cardsRow}>
         <TouchableOpacity style={[styles.serviceCard, styles.foodCard]} activeOpacity={0.7}>
           <View style={styles.cardTextContent}>
             <Text style={styles.cardTitle}>Food{"\n"}Delivery</Text>
@@ -269,7 +367,7 @@ export default function HomeScreen() {
       </Animated.View>
 
       {/* ── Categories ── */}
-      <Animated.View style={styles.sectionRow} entering={FadeInDown.duration(400).delay(180)}>
+      <Animated.View style={styles.sectionRow}>
         <Text style={styles.sectionTitle}>Categories</Text>
         <TouchableOpacity activeOpacity={0.8} onPress={() => router.push('/categories')}><Text style={styles.seeAll}>See all</Text></TouchableOpacity>
       </Animated.View>
@@ -279,24 +377,29 @@ export default function HomeScreen() {
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 4 }}
         entering={FadeInRight.duration(400).delay(220)}
-        data={isLoading && products.length === 0 ? [1,2,3,4,5,6] as any : activeCategories}
-        keyExtractor={(cat, idx) => isLoading && products.length === 0 ? String(idx) : cat.id}
+        data={isLoading && allDishes.length === 0 ? [1,2,3,4,5,6] as any : categoriesWithItems}
+        keyExtractor={(cat, idx) => isLoading && allDishes.length === 0 ? String(idx) : cat.id}
         initialNumToRender={6}
         maxToRenderPerBatch={10}
         renderItem={({ item: cat }) => {
-          if (isLoading && products.length === 0) return <CategorySkeleton />;
-          const active = selectedCategory === cat.name;
+          if (isLoading && allDishes.length === 0) return <CategorySkeleton />;
+          const active = selectedCategoryId === cat.id;
           return (
             <TouchableOpacity
-              style={styles.catItem}
               activeOpacity={0.7}
-              onPress={() => setSelectedCategory(cat.name)}
+              style={styles.catItem}
+              onPress={() => {
+                setSelectedCategoryId(cat.id);
+                setSelectedCategoryName(cat.name);
+              }}
             >
               <View style={[styles.catCard, active && styles.catCardActive]}>
                 {cat.image ? (
-                  <Image source={typeof cat.image === 'string' ? { uri: cat.image } : cat.image} style={styles.catImg} contentFit="contain" cachePolicy="memory-disk" transition={200} />
-                ) : (
+                  <Image source={typeof cat.image === 'string' ? { uri: cat.image } : cat.image} style={styles.catImg} contentFit="cover" cachePolicy="memory-disk" transition={200} />
+                ) : cat.emoji ? (
                   <Text style={styles.catEmoji}>{cat.emoji}</Text>
+                ) : (
+                  <Ionicons name={cat.id === "0" || cat.id === "ALL" ? "restaurant-outline" : "fast-food-outline"} size={34} color={active ? "#10B981" : "#4B5563"} />
                 )}
               </View>
               <Text style={[styles.catName, active && styles.catNameActive]}>{cat.name}</Text>
@@ -305,15 +408,7 @@ export default function HomeScreen() {
         }}
       />
 
-      {/* ── Food Items Grid Header ── */}
-      <Animated.View style={styles.foodGridSection} entering={FadeInDown.duration(400).delay(240)}>
-        <View style={styles.foodGridHeader}>
-          <Text style={styles.foodGridTitle}>
-            {selectedCategory === "All" ? "All Delicious Items" : `${selectedCategory} Menu`}
-          </Text>
-          <Text style={styles.foodGridCount}>{filteredFoods.length} items</Text>
-        </View>
-      </Animated.View>
+      <View style={{ height: 16 }} />
     </>
   );
 
@@ -330,12 +425,12 @@ export default function HomeScreen() {
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 6 }}
         entering={FadeInRight.duration(400).delay(300)}
-        data={isLoading && products.length === 0 ? [1,2,3] as any : restaurantsList}
-        keyExtractor={(item, idx) => isLoading && products.length === 0 ? String(idx) : item.id}
+        data={isLoading && allDishes.length === 0 ? [1,2,3] as any : restaurantsList}
+        keyExtractor={(item, idx) => isLoading && allDishes.length === 0 ? String(idx) : item.id}
         initialNumToRender={6}
         maxToRenderPerBatch={10}
         renderItem={({ item }) => {
-          if (isLoading && products.length === 0) return <RestaurantSkeleton />;
+          if (isLoading && allDishes.length === 0) return <RestaurantSkeleton />;
           const fav = isWishlisted(item.id);
           return (
             <RestaurantCard
@@ -355,7 +450,7 @@ export default function HomeScreen() {
       />
 
       {/* ── Promo Banner ── */}
-      <Animated.View style={styles.promoBanner} entering={FadeInDown.duration(400).delay(340)}>
+      <Animated.View style={styles.promoBanner}>
         <Image source={{ uri: DELIVERY_SCOOTER }} style={styles.scooterImg} contentFit="contain" cachePolicy="memory-disk" transition={200} />
         <View style={{ flex: 1, marginLeft: 10 }}>
           <Text style={styles.promoTitle}>Get 20% Off</Text>
@@ -372,7 +467,7 @@ export default function HomeScreen() {
   );
 
   return (
-    <Animated.View style={{ flex: 1 }} entering={FadeIn.duration(300)}>
+    <Animated.View style={{ flex: 1 }}>
       <SafeAreaView style={styles.safeArea} edges={["top"]}>
         <StatusBar barStyle="dark-content" />
 
@@ -392,18 +487,28 @@ export default function HomeScreen() {
 
 
       <FlatList
-        data={isLoading && products.length === 0 ? [1,2,3,4,5,6] as any : filteredFoods}
-        keyExtractor={(item, idx) => isLoading && products.length === 0 ? String(idx) : item.id}
+        data={isLoading && allDishes.length === 0 ? [1,2,3,4,5,6] as any : filteredFoods}
+        keyExtractor={(item, idx) => isLoading && allDishes.length === 0 ? String(idx) : item.id}
         numColumns={2}
         columnWrapperStyle={{ justifyContent: "space-between", marginBottom: 12 }}
         contentContainerStyle={[styles.scrollContent, { paddingBottom: 160 }]}
         showsVerticalScrollIndicator={false}
         initialNumToRender={6}
         maxToRenderPerBatch={10}
-        ListHeaderComponent={renderHeader}
-        ListFooterComponent={renderFooter}
+        ListEmptyComponent={
+          !isLoading ? (
+            <View style={{ padding: 40, alignItems: 'center', marginTop: 40 }}>
+               <Ionicons name="search-outline" size={48} color="#9CA3AF" />
+               <Text style={{ marginTop: 16, fontSize: 16, color: '#4B5563', textAlign: 'center' }}>
+                 No items found in this category
+               </Text>
+            </View>
+          ) : null
+        }
+        ListHeaderComponent={<View>{renderHeader()}</View>}
+        ListFooterComponent={<View>{renderFooter()}</View>}
         renderItem={({ item, index }) => {
-          if (isLoading && products.length === 0) {
+          if (isLoading && allDishes.length === 0) {
             return (
               <Animated.View style={{ width: "48%" }} entering={FadeInDown.duration(400)}>
                 <FoodCardSkeleton />
@@ -478,6 +583,20 @@ export default function HomeScreen() {
               </TouchableOpacity>
             </Animated.View>
           );
+        }}
+      />
+      
+      <FilterModal
+        visible={isFilterModalVisible}
+        onClose={() => setIsFilterModalVisible(false)}
+        sortBy={sortBy}
+        setSortBy={setSortBy}
+        priceRange={priceRange}
+        setPriceRange={setPriceRange}
+        onApply={() => setIsFilterModalVisible(false)}
+        onReset={() => {
+          setSortBy("Popularity");
+          setPriceRange("$");
         }}
       />
 
@@ -734,19 +853,19 @@ const styles = StyleSheet.create({
   seeAll: { fontSize: 14, fontWeight: "600", color: "#1B7D3C" },
 
   /* ── Categories ── */
-  catItem: { alignItems: "center", marginRight: 18, width: 64 },
+  catItem: { alignItems: "center", marginRight: 18, width: 70 },
   catCard: {
-    width: 60, height: 60, borderRadius: 16,
-    backgroundColor: "#FFF", alignItems: "center", justifyContent: "center",
+    width: 70, height: 70, borderRadius: 20,
+    backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center",
     borderWidth: 1, borderColor: "#F3F4F6",
-    shadowColor: "#000", shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.03, shadowRadius: 4, elevation: 2,
   },
-  catCardActive: { borderColor: "#1B7D3C", borderWidth: 2, backgroundColor: "#EFFDF4" },
-  catImg: { width: 38, height: 38 },
+  catCardActive: {
+    borderColor: "#10B981", borderWidth: 2,
+  },
+  catImg: { width: 44, height: 44, borderRadius: 12 },
   catEmoji: { fontSize: 24 },
-  catName: { fontSize: 12, fontWeight: "600", color: "#1A1A1A", marginTop: 6, textAlign: "center" },
-  catNameActive: { color: "#1B7D3C", fontWeight: "700" },
+  catName: { fontSize: 13, fontWeight: "600", color: "#1F2937", marginTop: 6, textAlign: "center" },
+  catNameActive: { color: "#10B981", fontWeight: "700" },
 
   /* ── Food Grid ── */
   foodGridSection: {

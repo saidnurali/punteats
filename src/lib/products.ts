@@ -4,6 +4,7 @@ export interface Product {
   id: string;
   name: string;
   category: string;
+  category_id?: string;
   price: number;
   priceFormatted: string;
   rating: string;
@@ -35,6 +36,7 @@ export function mapFoodItemToProduct(item: any): Product {
     id: String(item.id),
     name: item.name || 'Dish Name',
     category: (item.category || 'Food').replace(/^[^\w\s]+/g, '').trim() || item.category || 'Food',
+    category_id: item.category_id,
     price: priceNum,
     priceFormatted: `$${priceNum.toFixed(2)}`,
     rating: String(item.rating || '4.8').replace(/[^\d.]/g, '') || '4.8',
@@ -46,16 +48,18 @@ export function mapFoodItemToProduct(item: any): Product {
     image_url: item.image_url,
     restaurant_id: item.restaurant_id ? String(item.restaurant_id) : undefined,
     availability: item.availability || 'In Stock',
-    variants: Array.isArray(item.variants) ? item.variants : [],
-    add_ons: Array.isArray(item.add_ons) ? item.add_ons : []
+    variants: Array.isArray(item.variants) ? item.variants.map((v: any) => ({ ...v, name: v.name || v.option_name, price: Number(v.price) || 0 })) : [],
+    add_ons: Array.isArray(item.add_ons) ? item.add_ons.map((a: any) => ({ ...a, name: a.name || a.option_name, price: Number(a.price) || 0 })) : []
   };
 }
 
 export async function fetchProductsFromSupabase(): Promise<Product[]> {
   try {
-    const { data, error } = await supabase
-      .from('food_items')
-      .select('id, name, price, rating, prep_time, calories, description, image_url, images, availability, category, restaurant_id, variants, add_ons');
+      const { data, error } = await supabase
+        .from('food_items')
+        .select('id, name, price, rating, prep_time, calories, description, image_url, images, availability, category, category_id, restaurant_id, variants, add_ons, categories(id, name, image_url)')
+        .order('created_at', { ascending: false })
+        .limit(100);
     if (error || !data) return PRODUCTS_DATA;
     const mapped = data.map(mapFoodItemToProduct);
     PRODUCTS_DATA = mapped;
@@ -75,7 +79,7 @@ export async function fetchProductById(id: string): Promise<Product | undefined>
   try {
     const { data, error } = await supabase
       .from('food_items')
-      .select('id, name, price, rating, prep_time, calories, description, image_url, images, availability, category, restaurant_id, variants, add_ons')
+      .select('*, restaurant:restaurants(*), categories(id, name, image_url)')
       .eq('id', id)
       .single();
     if (error || !data) return local;

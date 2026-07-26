@@ -93,6 +93,7 @@ export default function CheckoutScreen() {
 
     const orderPayload = {
       order_number: orderId,
+      user_id: user?.id || null,
       customer_name: custName,
       customer_phone: phoneNumber || "+252 90 7112233",
       restaurant_id: cartItems[0]?.restaurant_id || null,
@@ -111,9 +112,9 @@ export default function CheckoutScreen() {
       created_at: new Date().toISOString()
     };
 
-    const { data, error } = await supabase.from('orders').insert([orderPayload]).select().single();
+    const { data, error } = await supabase.from('orders').insert([orderPayload]).select('id').single();
     
-    if (error) {
+    if (error || !data?.id) {
       console.error("Order Insert Error:", error);
       Alert.alert("Error", "Could not place order. Please try again.");
       return;
@@ -121,15 +122,26 @@ export default function CheckoutScreen() {
 
     clearCart();
 
+    const guaranteedId = String(data.id);
+
     Alert.alert(
       "Order Placed Successfully 🎉",
-      `Your order ${data.order_number} has been sent directly to the PuntGo Admin Panel under Pending Orders! We will deliver to ${addressTitle} (${addressDetails}) soon.`,
+      `Your order ${orderId} has been sent directly to the PuntGo Admin Panel under Pending Orders! We will deliver to ${addressTitle} (${addressDetails}) soon.`,
       [
         {
           text: "Track Order",
           onPress: () => {
-            router.push(`/order-tracking/${data.id}`);
-          },
+            router.replace({
+              pathname: `/order-tracking/[id]`,
+              params: {
+                id: guaranteedId,
+                from: 'checkout',
+                status: 'Pending',
+                totalAmount: finalTotal,
+                restaurantName: restaurantName
+              }
+            });
+          }
         },
       ]
     );

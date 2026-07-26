@@ -32,6 +32,45 @@ export default function OrdersScreen() {
     } catch {}
   };
 
+  const mapOrder = (o: any) => {
+    let parsedItems = o.items;
+    if (typeof parsedItems === "string") {
+      try { parsedItems = JSON.parse(parsedItems); } catch {}
+    }
+    
+    let itemsStr = "Order items";
+    if (Array.isArray(parsedItems) && parsedItems.length > 0) {
+      itemsStr = parsedItems.map((i: any) => {
+        if (typeof i === 'string') return i;
+        return `${i.quantity || 1}x ${i.name || "Item"}`;
+      }).join(", ");
+    } else if (typeof parsedItems === "string" && parsedItems.trim()) {
+      itemsStr = parsedItems;
+    } else if (typeof parsedItems === "object" && parsedItems !== null) {
+      itemsStr = parsedItems.summary || "Order items";
+    }
+
+    const totalNum = typeof o.total_price === "number" ? o.total_price : parseFloat(o.total_price) || 0;
+    return {
+      id: o.order_number || o.id,
+      dbId: o.id,
+      customerName: o.customer_name || "Customer",
+      restaurant: o.restaurant_name || "Garowe Restaurant",
+      items: itemsStr || "Order items",
+      address: o.delivery_address || "Garowe, Puntland",
+      total: `$${totalNum.toFixed(2)}`,
+      status: o.status || "Pending",
+      time: o.created_at ? new Date(o.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Just now",
+      phone: o.customer_phone || "+252 90 7000000",
+      paymentMethod: o.payment_method || "Cash on Delivery",
+      createdAt: o.created_at ? new Date(o.created_at).getTime() : Date.now(),
+      deliveryFee: "$1.50",
+      subtotal: `$${Math.max(0, totalNum - 1.5).toFixed(2)}`,
+      driver: o.driver || undefined,
+      rejectionReason: o.rejection_reason || undefined,
+    };
+  };
+
   const fetchOrders = async () => {
     try {
       const storedSession = await AsyncStorage.getItem('puntgo_user_session');
@@ -72,44 +111,7 @@ export default function OrdersScreen() {
       }
 
       if (finalData) {
-        const mapped = finalData.map((o: any) => {
-          let parsedItems = o.items;
-          if (typeof parsedItems === "string") {
-            try { parsedItems = JSON.parse(parsedItems); } catch {}
-          }
-          
-          let itemsStr = "Order items";
-          if (Array.isArray(parsedItems) && parsedItems.length > 0) {
-            itemsStr = parsedItems.map((i: any) => {
-              if (typeof i === 'string') return i;
-              return `${i.quantity || 1}x ${i.name || "Item"}`;
-            }).join(", ");
-          } else if (typeof parsedItems === "string" && parsedItems.trim()) {
-            itemsStr = parsedItems;
-          } else if (typeof parsedItems === "object" && parsedItems !== null) {
-            itemsStr = parsedItems.summary || "Order items";
-          }
-
-          const totalNum = typeof o.total_price === "number" ? o.total_price : parseFloat(o.total_price) || 0;
-          return {
-            id: o.order_number || o.id,
-            dbId: o.id,
-            customerName: o.customer_name || "Customer",
-            restaurant: o.restaurant_name || "Garowe Restaurant",
-            items: itemsStr || "Order items",
-            address: o.delivery_address || "Garowe, Puntland",
-            total: `$${totalNum.toFixed(2)}`,
-            status: o.status || "Pending",
-            time: o.created_at ? new Date(o.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Just now",
-            phone: o.customer_phone || "+252 90 7000000",
-            paymentMethod: o.payment_method || "Cash on Delivery",
-            createdAt: o.created_at ? new Date(o.created_at).getTime() : Date.now(),
-            deliveryFee: "$1.50",
-            subtotal: `$${Math.max(0, totalNum - 1.5).toFixed(2)}`,
-            driver: o.driver || undefined,
-            rejectionReason: o.rejection_reason || undefined,
-          };
-        });
+        const mapped = finalData.map(mapOrder);
         setOrders(mapped);
         AsyncStorage.setItem('@cached_my_orders', JSON.stringify(mapped)).catch(()=>null);
       }
@@ -130,15 +132,34 @@ export default function OrdersScreen() {
       try {
         const storedSession = await AsyncStorage.getItem('puntgo_user_session');
         let userPhone = "+252 90 7112233"; // Fallback to prevent global listening
+        let userId: string | undefined;
         if (storedSession) {
           const p = JSON.parse(storedSession);
           userPhone = p.phone_number || userPhone;
+          userId = p.id;
+        }
+
+        let filter = `customer_phone=eq.${userPhone}`;
+        if (userId) {
+          filter = `user_id=eq.${userId}`;
         }
 
         const channelTopic = `my_orders_sync_${Math.random().toString(36).substring(2, 9)}`;
         activeChannel = supabase.channel(channelTopic)
-          .on("postgres_changes", { event: "*", schema: "public", table: "orders", filter: `customer_phone=eq.${userPhone}` }, () => {
-            fetchOrders();
+          .on("postgres_changes", { event: "*", schema: "public", table: "orders", filter }, (payload) => {
+            const newRecord = payload.new as any;
+            setOrders(prevOrders => {
+              let updated = [...prevOrders];
+              if (payload.eventType === 'UPDATE') {
+                updated = updated.map(o => o.dbId === newRecord.id ? mapOrder(newRecord) : o);
+              } else if (payload.eventType === 'INSERT') {
+                updated = [mapOrder(newRecord), ...updated];
+              } else if (payload.eventType === 'DELETE') {
+                updated = updated.filter(o => o.dbId !== payload.old.id);
+              }
+              AsyncStorage.setItem('@cached_my_orders', JSON.stringify(updated)).catch(()=>null);
+              return updated;
+            });
           })
           .subscribe();
       } catch (err) {

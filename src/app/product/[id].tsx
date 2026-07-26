@@ -8,6 +8,7 @@ import {
   Dimensions,
   Platform,
   StatusBar,
+  Alert,
 } from "react-native";
 import { Image } from "expo-image";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -55,11 +56,7 @@ export default function ProductDetailsScreen() {
   const [selectedVariant, setSelectedVariant] = useState<any | null>(null);
   const [selectedAddOns, setSelectedAddOns] = useState<any[]>([]);
 
-  React.useEffect(() => {
-    if (product?.variants && product.variants.length > 0 && !selectedVariant) {
-      setSelectedVariant(product.variants[0]);
-    }
-  }, [product]);
+
 
   if (isLoading && !product) {
     return <ProductDetailSkeleton />;
@@ -106,6 +103,11 @@ export default function ProductDetailsScreen() {
   };
 
   const handleAddToCart = () => {
+    if (product?.variants && product.variants.length > 0 && !selectedVariant) {
+      Alert.alert("Selection Required", "Please choose a size/option before adding to cart.");
+      return;
+    }
+
     const productPayload = {
       ...product,
       selectedVariant,
@@ -122,7 +124,7 @@ export default function ProductDetailsScreen() {
 
   const basePrice = selectedVariant && typeof selectedVariant.price === 'number' 
     ? selectedVariant.price 
-    : product.price;
+    : product?.price || 0;
   const addOnsTotal = selectedAddOns.reduce((sum, addon) => sum + (addon.price || 0), 0);
   const calculatedTotal = ((basePrice + addOnsTotal) * quantity).toFixed(2);
 
@@ -168,7 +170,7 @@ export default function ProductDetailsScreen() {
           <TouchableOpacity
             style={[styles.iconButton, { marginLeft: 8 }]}
             activeOpacity={0.7}
-            onPress={() => router.push("/(tabs)/cart")}
+            onPress={() => router.push({ pathname: "/cart", params: { returnTo: `/product/${product?.id}` } })}
           >
             <Ionicons name="cart-outline" size={24} color="#1A1A1A" />
             {totalItems > 0 && (
@@ -191,7 +193,7 @@ export default function ProductDetailsScreen() {
         >
           <Ionicons name="checkmark-circle" size={20} color="#FFFFFF" />
           <Text style={styles.toastText}>{toastMessage}</Text>
-          <TouchableOpacity onPress={() => router.push("/(tabs)/cart")}>
+          <TouchableOpacity onPress={() => router.push({ pathname: "/cart", params: { returnTo: `/product/${product?.id}` } })}>
             <Text style={styles.toastLink}>View Cart</Text>
           </TouchableOpacity>
         </Animated.View>
@@ -290,25 +292,27 @@ export default function ProductDetailsScreen() {
           </View>
 
           {/* Interactive Quantity Counter */}
-          <View style={styles.quantityCounter}>
-            <TouchableOpacity
-              style={styles.qtyBtnMinus}
-              activeOpacity={0.7}
-              onPress={handleDecrement}
-            >
-              <Ionicons name="remove" size={18} color="#1A1A1A" />
-            </TouchableOpacity>
+          {(!product.variants || product.variants.length === 0) && (
+            <View style={styles.quantityCounter}>
+              <TouchableOpacity
+                style={styles.qtyBtnMinus}
+                activeOpacity={0.7}
+                onPress={handleDecrement}
+              >
+                <Ionicons name="remove" size={18} color="#1A1A1A" />
+              </TouchableOpacity>
 
-            <Text style={styles.qtyCount}>{existingCartItem ? existingCartItem.quantity : quantity}</Text>
+              <Text style={styles.qtyCount}>{existingCartItem ? existingCartItem.quantity : quantity}</Text>
 
-            <TouchableOpacity
-              style={styles.qtyBtnPlus}
-              activeOpacity={0.7}
-              onPress={handleIncrement}
-            >
-              <Ionicons name="add" size={18} color="#1A1A1A" />
-            </TouchableOpacity>
-          </View>
+              <TouchableOpacity
+                style={styles.qtyBtnPlus}
+                activeOpacity={0.7}
+                onPress={handleIncrement}
+              >
+                <Ionicons name="add" size={18} color="#1A1A1A" />
+              </TouchableOpacity>
+            </View>
+          )}
         </Animated.View>
 
         {/* ── Dynamic Variants Selector ── */}
@@ -324,11 +328,13 @@ export default function ProductDetailsScreen() {
                   activeOpacity={0.7}
                   onPress={() => setSelectedVariant(variant)}
                 >
-                  <View style={[styles.radioCircle, isSelected && styles.radioCircleSelected]}>
-                    {isSelected && <View style={styles.radioDot} />}
-                  </View>
+                  <Ionicons 
+                    name={isSelected ? "radio-button-on" : "radio-button-off"} 
+                    size={24} 
+                    color={isSelected ? "#10B981" : "#9CA3AF"} 
+                  />
                   <Text style={[styles.variantName, isSelected && styles.variantNameSelected]}>{variant.name}</Text>
-                  <Text style={styles.variantPrice}>+${(variant.price || 0).toFixed(2)}</Text>
+                  <Text style={styles.variantPrice}>${(variant.price || 0).toFixed(2)}</Text>
                 </TouchableOpacity>
               );
             })}
@@ -402,13 +408,15 @@ export default function ProductDetailsScreen() {
       <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: '#FFFFFF', paddingHorizontal: 20, paddingVertical: 16, borderTopWidth: 1, borderTopColor: '#F3F4F6', elevation: 10, shadowColor: '#000', shadowOffset: { width: 0, height: -3 }, shadowOpacity: 0.05, shadowRadius: 6, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
         <TouchableOpacity 
           style={{ flex: 1, height: 52, backgroundColor: '#1B7D3C', borderRadius: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 }} 
-          onPress={existingCartItem ? () => router.push('/(tabs)/cart') : handleAddToCart}
+          onPress={existingCartItem ? () => router.push({ pathname: "/cart", params: { returnTo: `/product/${product?.id}` } }) : handleAddToCart}
         >
           <Ionicons name="cart-outline" size={22} color="#FFFFFF" />
           <Text style={{ color: '#FFFFFF', fontWeight: 'bold', fontSize: 16 }}>
             {existingCartItem 
               ? `View Cart (${totalItems}) • $${totalPrice.toFixed(2)}` 
-              : `Add ${quantity} to Cart • $${Number(calculatedTotal).toFixed(2)}`
+              : (product.variants && product.variants.length > 0 && !selectedVariant)
+                ? "Select Option"
+                : `Add ${(!product.variants || product.variants.length === 0) ? quantity : 1} to Cart • $${Number(calculatedTotal).toFixed(2)}`
             }
           </Text>
         </TouchableOpacity>
@@ -789,7 +797,7 @@ const styles = StyleSheet.create({
     borderColor: "transparent",
   },
   variantRowSelected: {
-    borderColor: "#1B7D3C",
+    borderColor: "#10B981",
     backgroundColor: "#F0FDF4",
   },
   radioCircle: {
