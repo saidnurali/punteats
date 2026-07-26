@@ -7,6 +7,13 @@ import { CartProvider } from "@/lib/CartContext";
 import { WishlistProvider } from "@/lib/WishlistContext";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
+import { LogBox } from "react-native";
+
+LogBox.ignoreLogs([
+  "expo-notifications: Android Push notifications",
+  "`expo-notifications` functionality is not fully supported in Expo Go",
+]);
+
 Sentry.init({
   dsn: "https://0f091efee75d48364fd93e05442fa60d@o4511773028253696.ingest.de.sentry.io/4511773045751888",
   // Set tracesSampleRate to 1.0 to capture 100% of transactions for tracing.

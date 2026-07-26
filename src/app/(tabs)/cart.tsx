@@ -92,7 +92,7 @@ export default function CartScreen() {
             showsVerticalScrollIndicator={false}
           >
             {cartItems.map((item, index) => (
-              <Animated.View key={item.id} style={styles.card} entering={FadeInDown.duration(400)}>
+              <Animated.View key={`${item.id}-${index}`} style={styles.card} entering={FadeInDown.duration(400)}>
                 {/* Left: Food thumbnail */}
                 <Image
                   source={{ uri: item.image }}

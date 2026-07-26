@@ -15,6 +15,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useLocalSearchParams } from "expo-router";
+import * as Location from 'expo-location';
 import { getStoredOrders, LiveOrder } from "@/lib/ordersStore";
 import { supabase } from "@/lib/supabase";
 
@@ -45,10 +46,24 @@ export default function OrderTrackingScreen() {
   const [order, setOrder] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [driverLocation, setDriverLocation] = useState<{latitude: number, longitude: number, heading: number} | null>(null);
+  const [userLocation, setUserLocation] = useState<{latitude: number, longitude: number} | null>(null);
   const [distanceKm, setDistanceKm] = useState<number>(0);
   const mapRef = useRef<MapView>(null);
 
   const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  // Request actual GPS location from device/simulator
+  useEffect(() => {
+    (async () => {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') return;
+      const location = await Location.getCurrentPositionAsync({});
+      setUserLocation({
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude,
+      });
+    })();
+  }, []);
 
   useEffect(() => {
     Animated.loop(
@@ -154,8 +169,11 @@ export default function OrderTrackingScreen() {
   const currentStep = getStepIndex(order?.status);
   const orderTimeStr = order ? new Date(order.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "10:30 AM";
 
-  const destLat = Number(order?.delivery_lat || order?.delivery_latitude || GAROWE_CUSTOMER.latitude);
-  const destLng = Number(order?.delivery_lng || order?.delivery_longitude || GAROWE_CUSTOMER.longitude);
+  let validUserLat = userLocation?.latitude;
+  let validUserLng = userLocation?.longitude;
+
+  const destLat = Number(order?.delivery_lat || order?.delivery_latitude || validUserLat || GAROWE_CUSTOMER.latitude);
+  const destLng = Number(order?.delivery_lng || order?.delivery_longitude || validUserLng || GAROWE_CUSTOMER.longitude);
   const destination = { latitude: destLat, longitude: destLng };
 
   const restLat = Number(order?.restaurant_lat || order?.restaurant_latitude || GAROWE_RESTAURANT.latitude);

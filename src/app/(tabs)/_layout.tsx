@@ -3,9 +3,94 @@ import { Tabs } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { View, Text, StyleSheet, Platform } from "react-native";
 import { useCart } from "@/lib/CartContext";
+import { usePushNotifications } from "@/lib/usePushNotifications";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { supabase } from "@/lib/supabase";
+import { useEffect } from "react";
+import * as Notifications from "expo-notifications";
 
 export default function TabsLayout() {
   const { totalItems } = useCart();
+  const { expoPushToken } = usePushNotifications();
+
+  useEffect(() => {
+    async function savePushToken() {
+      if (expoPushToken?.data) {
+        try {
+          const sessionString = await AsyncStorage.getItem('puntgo_user_session');
+          if (sessionString) {
+            const session = JSON.parse(sessionString);
+            if (session?.id) {
+              await supabase
+                .from('profiles')
+                .update({ expo_push_token: expoPushToken.data })
+                .eq('id', session.id);
+            }
+          }
+        } catch (error) {
+          console.error("Error saving push token to profile", error);
+        }
+      }
+    }
+    savePushToken();
+
+    // Frontend Realtime Fallback for Push Notifications
+    let subscription: any = null;
+    async function setupRealtimeListener() {
+      const sessionString = await AsyncStorage.getItem('puntgo_user_session');
+      if (!sessionString) return;
+      const session = JSON.parse(sessionString);
+      const userPhone = session?.phone_number;
+
+      subscription = supabase
+        .channel('public:orders')
+        .on(
+          'postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'orders' },
+          (payload) => {
+            const oldStatus = payload.old?.status;
+            const newStatus = payload.new?.status;
+            
+            // Only notify if status changed AND the order belongs to this user
+            if (oldStatus !== newStatus && payload.new?.customer_phone === userPhone) {
+              
+              let title = 'Order Update';
+              let body = `Your order status changed to ${newStatus}`;
+
+              if (newStatus?.toLowerCase() === 'preparing') {
+                title = '👨‍🍳 Preparing your food!';
+                body = 'The restaurant has accepted your order and is preparing it now.';
+              } else if (newStatus?.toLowerCase() === 'out for delivery') {
+                title = '🛵 Order is on the way!';
+                body = 'Your driver has picked up your food and is heading your way.';
+              } else if (newStatus?.toLowerCase() === 'delivered') {
+                title = '✅ Order Delivered!';
+                body = 'Your food has arrived. Enjoy your meal from PuntEats!';
+              }
+
+              // Trigger local notification immediately
+              Notifications.scheduleNotificationAsync({
+                content: {
+                  title,
+                  body,
+                  sound: true,
+                },
+                trigger: null,
+              });
+            }
+          }
+        )
+        .subscribe();
+    }
+    
+    setupRealtimeListener();
+
+    return () => {
+      if (subscription) {
+        supabase.removeChannel(subscription);
+      }
+    };
+  }, [expoPushToken]);
 
   return (
     <Tabs
