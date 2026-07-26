@@ -15,35 +15,80 @@ import { getStoredOrders, LiveOrder } from "@/lib/ordersStore";
 import { supabase } from "@/lib/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
+import { OrderCardSkeleton } from "@/components/SkeletonLoader";
 
 export default function OrdersScreen() {
   const router = useRouter();
   const [orders, setOrders] = useState<LiveOrder[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const loadCacheOnce = async () => {
+    try {
+      const cachedOrders = await AsyncStorage.getItem('@cached_my_orders');
+      if (cachedOrders && cachedOrders !== '[]') {
+        setOrders(JSON.parse(cachedOrders));
+        setLoading(false);
+      }
+    } catch {}
+  };
+
   const fetchOrders = async () => {
     try {
       const storedSession = await AsyncStorage.getItem('puntgo_user_session');
       let userId = undefined;
+      let userPhone = undefined;
       if (storedSession) {
         const p = JSON.parse(storedSession);
         userId = p.id;
+        userPhone = p.phone_number;
       }
 
-      let query = supabase.from('orders').select('*');
+      let query = supabase.from('orders').select('*').limit(30);
       
       if (userId) {
         query = query.eq('user_id', userId);
+      } else if (userPhone) {
+        query = query.eq('customer_phone', userPhone);
+      } else {
+        // Fallback for completely anonymous users to prevent DB timeouts
+        // By filtering to a specific known phone, we prevent full table scans
+        query = query.eq('customer_phone', "+252 90 7112233"); 
       }
 
       const { data, error } = await query.order('created_at', { ascending: false });
 
-      if (data) {
-        const mapped = data.map((o: any) => {
-          let itemsStr = "";
-          if (typeof o.items === "string") itemsStr = o.items;
-          else if (Array.isArray(o.items)) itemsStr = o.items.map((i: any) => `${i.quantity || 1}x ${i.name || i}`).join(", ");
-          else if (typeof o.items === "object" && o.items !== null) itemsStr = o.items.summary || JSON.stringify(o.items);
+      let finalData = data;
+
+      if (error) {
+        if (typeof error.message === 'string' && error.message.trim().startsWith('[')) {
+          try {
+            finalData = JSON.parse(error.message);
+          } catch {
+            console.warn("fetchOrders Supabase Error:", error);
+          }
+        } else {
+          console.warn("fetchOrders Supabase Error:", error);
+        }
+      }
+
+      if (finalData) {
+        const mapped = finalData.map((o: any) => {
+          let parsedItems = o.items;
+          if (typeof parsedItems === "string") {
+            try { parsedItems = JSON.parse(parsedItems); } catch {}
+          }
+          
+          let itemsStr = "Order items";
+          if (Array.isArray(parsedItems) && parsedItems.length > 0) {
+            itemsStr = parsedItems.map((i: any) => {
+              if (typeof i === 'string') return i;
+              return `${i.quantity || 1}x ${i.name || "Item"}`;
+            }).join(", ");
+          } else if (typeof parsedItems === "string" && parsedItems.trim()) {
+            itemsStr = parsedItems;
+          } else if (typeof parsedItems === "object" && parsedItems !== null) {
+            itemsStr = parsedItems.summary || "Order items";
+          }
 
           const totalNum = typeof o.total_price === "number" ? o.total_price : parseFloat(o.total_price) || 0;
           return {
@@ -66,30 +111,47 @@ export default function OrdersScreen() {
           };
         });
         setOrders(mapped);
+        AsyncStorage.setItem('@cached_my_orders', JSON.stringify(mapped)).catch(()=>null);
       }
       setLoading(false);
-    } catch {
+    } catch (err) {
+      console.warn("fetchOrders unexpected error:", err);
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchOrders();
+    let activeChannel: any;
 
-    const channelTopic = `my_orders_list_sync_${Math.random().toString(36).substring(2, 9)}`;
-    const channel = supabase.channel(channelTopic)
-      .on("postgres_changes", {
-        event: "*",
-        schema: "public",
-        table: "orders",
-      }, () => {
-        fetchOrders();
-      })
-      .subscribe();
+    const initialize = async () => {
+      await loadCacheOnce();
+      await fetchOrders();
+
+      try {
+        const storedSession = await AsyncStorage.getItem('puntgo_user_session');
+        let userPhone = "+252 90 7112233"; // Fallback to prevent global listening
+        if (storedSession) {
+          const p = JSON.parse(storedSession);
+          userPhone = p.phone_number || userPhone;
+        }
+
+        const channelTopic = `my_orders_sync_${Math.random().toString(36).substring(2, 9)}`;
+        activeChannel = supabase.channel(channelTopic)
+          .on("postgres_changes", { event: "*", schema: "public", table: "orders", filter: `customer_phone=eq.${userPhone}` }, () => {
+            fetchOrders();
+          })
+          .subscribe();
+      } catch (err) {
+        console.warn("Realtime setup error:", err);
+      }
+    };
+
+    initialize();
 
     return () => {
-      channel.unsubscribe();
-      supabase.removeChannel(channel);
+      if (activeChannel) {
+        supabase.removeChannel(activeChannel);
+      }
     };
   }, []);
 
@@ -110,7 +172,13 @@ export default function OrdersScreen() {
         </TouchableOpacity>
       </View>
 
-      {orders.length === 0 ? (
+      {loading && orders.length === 0 ? (
+        <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          {[1, 2, 3].map((i) => (
+            <OrderCardSkeleton key={i} />
+          ))}
+        </ScrollView>
+      ) : orders.length === 0 ? (
         <View style={styles.emptyContainer}>
           <View style={styles.emptyIconCircle}>
             <Ionicons name="receipt-outline" size={60} color="#1B7D3C" />
@@ -130,19 +198,30 @@ export default function OrdersScreen() {
       ) : (
         <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
           {orders.map((order) => {
-            const isDelivered = order.status === "Delivered";
-            const isCancelled = order.status === "Cancelled";
-            const badgeBg = isDelivered ? "#DCFCE7" : isCancelled ? "#FEE2E2" : "#FEF3C7";
-            const badgeColor = isDelivered ? "#1B7D3C" : isCancelled ? "#DC2626" : "#D97706";
+            const statusStr = (order.status as string)?.toLowerCase() || "";
+            const isDelivered = statusStr === "delivered" || statusStr === "completed";
+            const isCancelled = statusStr === "cancelled" || statusStr === "rejected";
+            const isPreparing = statusStr === "preparing" || statusStr === "out for delivery" || statusStr === "on the way";
+            
+            let badgeBg = "#FEF3C7"; // Pending
+            let badgeColor = "#D97706";
+            
+            if (isDelivered) { badgeBg = "#DCFCE7"; badgeColor = "#1B7D3C"; }
+            else if (isCancelled) { badgeBg = "#FEE2E2"; badgeColor = "#DC2626"; }
+            else if (isPreparing) { badgeBg = "#DBEAFE"; badgeColor = "#2563EB"; } // Blue for active states
 
             return (
               <Animated.View key={order.id} entering={FadeInDown.duration(400)}>
                 <TouchableOpacity
                   style={styles.orderCard}
-                activeOpacity={0.88}
                 onPress={() => router.push({
-                  pathname: '/order-tracking',
-                  params: { orderId: order.id, initialStatus: order.status }
+                  pathname: '/order-details/[id]',
+                  params: { 
+                    id: order.id,
+                    status: order.status,
+                    totalAmount: order.total,
+                    restaurantName: order.restaurant
+                  }
                 })}
               >
                 <View style={styles.cardHeader}>

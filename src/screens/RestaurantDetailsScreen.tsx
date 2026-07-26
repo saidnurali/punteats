@@ -20,6 +20,7 @@ import { supabase } from "@/lib/supabase";
 import { mapFoodItemToProduct, Product } from "@/lib/products";
 import { useCart } from "@/lib/CartContext";
 import { useWishlist } from "@/lib/WishlistContext";
+import { RestaurantHeaderSkeleton, FoodCardSkeleton } from "@/components/SkeletonLoader";
 
 const { width } = Dimensions.get("window");
 
@@ -91,14 +92,17 @@ export default function RestaurantDetailsScreen() {
     }
     try {
       // 0. Try to load from cache instantly
-      AsyncStorage.getItem(`@cached_rest_${id}`).then(res => {
-        if(res) setRestaurant(JSON.parse(res));
-      }).catch(()=>null);
-      AsyncStorage.getItem(`@cached_foods_${id}`).then(res => {
-        if(res) setFoodItems(JSON.parse(res));
-      }).catch(()=>null);
+      let hasCache = false;
+      const cachedRest = await AsyncStorage.getItem(`@cached_rest_${id}`);
+      const cachedFoods = await AsyncStorage.getItem(`@cached_foods_${id}`);
+      if (cachedRest && cachedFoods && cachedFoods !== '[]') {
+        setRestaurant(JSON.parse(cachedRest));
+        setFoodItems(JSON.parse(cachedFoods));
+        hasCache = true;
+        setLoading(false); // Instantly show cached UI
+      }
 
-      // 1. Fetch restaurant info
+      // 1. Fetch restaurant info silently
       let queryRest = supabase.from("restaurants").select("*");
       if (!isNaN(Number(id))) {
         queryRest = queryRest.or(`id.eq.${id},id.eq.${Number(id)}`);
@@ -110,22 +114,10 @@ export default function RestaurantDetailsScreen() {
       if (restData) {
         setRestaurant(restData);
         AsyncStorage.setItem(`@cached_rest_${id}`, JSON.stringify(restData)).catch(()=>null);
-      } else {
-        // Fallback info if restaurant not found right away
-        setRestaurant({
-          name: "Pizza House",
-          tags: "Italian • Pizza • Fast Food",
-          prep_time: "20-30 min",
-          delivery_fee: 1.50,
-          min_order: 5,
-          rating: "4.6",
-          reviews_count: "128",
-          cover_image: DEFAULT_COVER,
-        });
       }
 
       // 2. Fetch food items linked specifically to this restaurant ID
-      const restaurantName = restData?.name || "Pizza House";
+      const restaurantName = restData?.name || "Restaurant";
       const { data: foods } = await supabase
         .from("food_items")
         .select("*")
@@ -135,20 +127,6 @@ export default function RestaurantDetailsScreen() {
         const mappedFoods = foods.map(mapFoodItemToProduct);
         setFoodItems(mappedFoods);
         AsyncStorage.setItem(`@cached_foods_${id}`, JSON.stringify(mappedFoods)).catch(()=>null);
-      } else {
-        // Secondary Fallback Query: Fetch all foods if restaurant_id was stored as string/null causing UUID cast error
-        const { data: allFoods } = await supabase.from("food_items").select("*");
-        if (allFoods) {
-          const filtered = allFoods.filter(item => 
-            item.restaurant_id === id || 
-            item.restaurant_name?.toLowerCase().trim() === restaurantName.toLowerCase().trim()
-          );
-          const mappedFiltered = filtered.map(mapFoodItemToProduct);
-          setFoodItems(mappedFiltered);
-          AsyncStorage.setItem(`@cached_foods_${id}`, JSON.stringify(mappedFiltered)).catch(()=>null);
-        } else {
-          setFoodItems([]);
-        }
       }
 
       // 3. Fetch real reviews for this restaurant
@@ -162,9 +140,10 @@ export default function RestaurantDetailsScreen() {
       if (reviewsData) {
         setReviews(reviewsData);
       }
+      
+      setLoading(false);
     } catch (err) {
       console.error("Error fetching restaurant details:", err);
-    } finally {
       setLoading(false);
     }
   };
@@ -172,25 +151,21 @@ export default function RestaurantDetailsScreen() {
   useEffect(() => {
     let isMounted = true;
     if (isMounted) {
-      setLoading(true);
       loadData();
     }
-
-    // Realtime sync for menu items of this restaurant
-    const channelTopic = `rest_details_${id}_${Math.random().toString(36).substring(2, 9)}`;
-    const channel = supabase
-      .channel(channelTopic)
-      .on("postgres_changes", { event: "*", schema: "public", table: "food_items" }, () => {
+    
+    const channelTopic = `restaurant_${id}_sync_${Math.random().toString(36).substring(2, 9)}`;
+    const channel = supabase.channel(channelTopic)
+      .on("postgres_changes", { event: "*", schema: "public", table: "restaurants" }, () => {
         loadData();
       })
-      .on("postgres_changes", { event: "*", schema: "public", table: "restaurants" }, () => {
+      .on("postgres_changes", { event: "*", schema: "public", table: "food_items" }, () => {
         loadData();
       })
       .subscribe();
 
     return () => {
       isMounted = false;
-      channel.unsubscribe();
       supabase.removeChannel(channel);
     };
   }, [id]);
@@ -267,8 +242,9 @@ export default function RestaurantDetailsScreen() {
         </View>
       </SafeAreaView>
 
-
-
+      {loading && !restaurant ? (
+        <RestaurantHeaderSkeleton />
+      ) : (
       <ScrollView style={styles.scrollView} contentContainerStyle={{ paddingBottom: totalItems > 0 ? 150 : 30 }} showsVerticalScrollIndicator={false}>
         {/* ── Hero Cover Image ── */}
         <View style={styles.heroImgWrap}>
@@ -392,7 +368,15 @@ export default function RestaurantDetailsScreen() {
               ))}
             </ScrollView>
 
-            {activeDishes.length === 0 ? (
+            {loading && foodItems.length === 0 ? (
+              <Animated.View style={[styles.categoryGroup, { paddingHorizontal: 16 }]} entering={FadeInDown.duration(400)}>
+                <View style={styles.dishGridContainer}>
+                  {[1, 2, 3, 4].map((i) => (
+                    <FoodCardSkeleton key={i} />
+                  ))}
+                </View>
+              </Animated.View>
+            ) : activeDishes.length === 0 ? (
               <View style={styles.emptyContainer}>
                 <Text style={styles.emptyEmoji}>🍽️</Text>
                 <Text style={styles.emptyText}>No dishes available in this category.</Text>
@@ -539,8 +523,9 @@ export default function RestaurantDetailsScreen() {
           </View>
         )}
       </ScrollView>
+      )}
 
-      {/* ── Floating View Cart Action Bar ── */}
+      {/* ── Fixed Bottom Cart Button ── */}
       {totalItems > 0 && (
         <View style={{ position: 'absolute', bottom: 30, left: 20, right: 20, backgroundColor: '#10B981', borderRadius: 56, elevation: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.2, shadowRadius: 16, zIndex: 9999 }}>
           <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 16 }} onPress={() => router.push('/(tabs)/cart')}>

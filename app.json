@@ -57,9 +57,7 @@
           "project": "___YOUR_PROJECT_SLUG___",
           "organization": "___YOUR_ORG_SLUG___"
         }
-      ],
-      "@sentry/react-native",
-      "expo-web-browser"
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

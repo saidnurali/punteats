@@ -70,7 +70,7 @@ export default function WishlistScreen() {
         {wishlistItems.map((item, idx) => (
           <Animated.View
             key={item.id}
-            entering={FadeInDown.delay(idx * 60).duration(350)}
+            entering={FadeInDown.duration(350)}
           >
             <View style={styles.card}>
               {/* Product Image */}

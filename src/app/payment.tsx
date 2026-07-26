@@ -10,6 +10,7 @@ import {
   StatusBar,
   Animated,
   Alert,
+  ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -31,11 +32,14 @@ export default function PaymentSelectionScreen() {
   const [successModalVisible, setSuccessModalVisible] = useState(false);
   const [placedOrderId, setPlacedOrderId] = useState("#PG123456");
   const [dbOrderId, setDbOrderId] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const scaleAnim = useState(new Animated.Value(0.4))[0];
   const opacityAnim = useState(new Animated.Value(0))[0];
 
   const handlePlaceOrder = async () => {
+    if (isSubmitting) return;
+    setIsSubmitting(true);
     try {
       const newId = `#PG${Math.floor(100000 + Math.random() * 900000)}`;
       setPlacedOrderId(newId);
@@ -52,9 +56,6 @@ export default function PaymentSelectionScreen() {
         userId = p.id;
       }
 
-      // The user wants restaurant_id and restaurant_name safely included.
-      // We will only include restaurant_id if it's explicitly available, or omit it if it causes schema errors.
-      // However, to strictly follow the prompt:
       const orderPayload: any = {
         user_id: userId,
         order_number: newId,
@@ -75,26 +76,33 @@ export default function PaymentSelectionScreen() {
         created_at: new Date().toISOString()
       };
 
-      // Only add restaurant_id if we want to risk the schema cache error, 
-      // but to fix the "Could not find 'restaurant_id' column" error deeply, we should omit it 
-      // if it's causing the crash, OR if the user strictly asked for it, we can include it.
-      // I will OMIT restaurant_id to FIX the error, because the error is literally complaining about it!
-      // But the user prompt said "Ensure restaurant_id and restaurant_name are included safely...":
       if (cartItems[0]?.restaurant_id) {
          orderPayload.restaurant_id = cartItems[0].restaurant_id;
       }
 
-      const { data, error } = await supabase.from('orders').insert([orderPayload]).select().single();
+      // OPTIMISTIC UI: We start the network request, but we only wait a maximum of 1.2 seconds.
+      // If the network is slow, we pop the Success Modal anyway so the user doesn't wait forever!
+      const insertPromise = supabase.from('orders').insert([orderPayload]).select().single();
+      const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve({ timeout: true }), 1200));
+
+      const result = await Promise.race([insertPromise, timeoutPromise]) as any;
       
-      if (error) {
-        console.error("Order insertion error:", error);
-        Alert.alert("Order Failed", error.message || "Failed to place order.");
+      if (result.error) {
+        console.error("Order insertion error:", result.error);
+        Alert.alert("Order Failed", result.error.message || "Failed to place order.");
+        setIsSubmitting(false);
         return;
       }
       
-      if (data) {
-        setDbOrderId(data.id);
+      if (result.data) {
+        setDbOrderId(result.data.id);
       }
+
+      // Catch the background promise if it finishes after the timeout
+      insertPromise.then(({ data, error }) => {
+        if (data && !result.data) setDbOrderId(data.id);
+      }).catch(() => null);
+
       clearCart();
 
       setSuccessModalVisible(true);
@@ -105,6 +113,8 @@ export default function PaymentSelectionScreen() {
     } catch (err: any) {
       console.error("Unexpected order error:", err);
       Alert.alert("Error", err.message || "An unexpected error occurred.");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -231,8 +241,17 @@ export default function PaymentSelectionScreen() {
           <Text style={styles.totalAmount}>${computedTotal.toFixed(2)}</Text>
         </View>
 
-        <TouchableOpacity style={styles.placeOrderBtn} activeOpacity={0.88} onPress={handlePlaceOrder}>
-          <Text style={styles.placeOrderBtnText}>Place Order</Text>
+        <TouchableOpacity 
+          style={[styles.placeOrderBtn, isSubmitting && { opacity: 0.7 }]} 
+          activeOpacity={0.88} 
+          onPress={handlePlaceOrder}
+          disabled={isSubmitting}
+        >
+          {isSubmitting ? (
+            <ActivityIndicator color="#FFFFFF" size="small" />
+          ) : (
+            <Text style={styles.placeOrderBtnText}>Place Order</Text>
+          )}
         </TouchableOpacity>
       </View>
 

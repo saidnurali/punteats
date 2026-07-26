@@ -23,6 +23,7 @@ import { useCart } from "@/lib/CartContext";
 import { useWishlist } from "@/lib/WishlistContext";
 import { RestaurantCard } from "@/components/RestaurantCard";
 import { CATEGORIES, coffeeTeaIcon } from "@/lib/categoriesData";
+import { CategorySkeleton, FoodCardSkeleton, RestaurantSkeleton } from "@/components/SkeletonLoader";
 import { getCachedRestaurants, fetchRestaurants } from "@/lib/DataCache";
 
 const { width } = Dimensions.get("window");
@@ -96,55 +97,63 @@ export default function HomeScreen() {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const fetchData = async () => {
-      const { data: rest } = await supabase.from('restaurants').select('*');
-      const fetchedProducts = await fetchProductsFromSupabase();
-      
-      if (rest) {
-        const mappedRests = rest.map((r: any) => ({
-          id: String(r.id),
-          name: r.name || "Restaurant",
-          tags: r.category || "Somali Traditional & Fast Food",
-          time: r.prep_time || "20-30m",
-          fee: r.delivery_fee || "$2.00",
-          rating: String(r.rating || "4.8"),
-          image: r.cover_image || r.image_url,
-          coverImage: r.cover_image || r.image_url,
-          logoImage: r.logo_image || r.emoji || "🏪",
-          emoji: r.emoji || r.logo_image || "🏪",
-          status: r.status || "Active",
-        }));
-        setRestaurantsList(mappedRests);
-        AsyncStorage.setItem('@cached_home_restaurants', JSON.stringify(mappedRests)).catch(()=>null);
+    const loadData = async () => {
+      try {
+        const cachedRest = await AsyncStorage.getItem('@cached_home_restaurants');
+        const cachedProd = await AsyncStorage.getItem('@cached_home_products');
+        let hasCache = false;
+        if (cachedRest && cachedProd && cachedProd !== '[]') {
+          setRestaurantsList(JSON.parse(cachedRest));
+          setProducts(JSON.parse(cachedProd));
+          hasCache = true;
+          setIsLoading(false); // Instantly show cached UI
+        }
+        
+        // Fetch fresh data silently in background
+        const { data: rest } = await supabase.from('restaurants').select('*').limit(20);
+        const fetchedProducts = await fetchProductsFromSupabase();
+        
+        if (rest) {
+          const mappedRests = rest.map((r: any) => ({
+            id: String(r.id),
+            name: r.name || "Restaurant",
+            tags: r.category || "Somali Traditional & Fast Food",
+            time: r.prep_time || "20-30m",
+            fee: r.delivery_fee || "$2.00",
+            rating: String(r.rating || "4.8"),
+            image: r.cover_image || r.image_url,
+            coverImage: r.cover_image || r.image_url,
+            logoImage: r.logo_image || r.emoji || "🏪",
+            emoji: r.emoji || r.logo_image || "🏪",
+            status: r.status || "Active",
+          }));
+          setRestaurantsList(mappedRests);
+          AsyncStorage.setItem('@cached_home_restaurants', JSON.stringify(mappedRests)).catch(()=>null);
+        }
+        if (fetchedProducts && fetchedProducts.length > 0) {
+          setProducts(fetchedProducts);
+          AsyncStorage.setItem('@cached_home_products', JSON.stringify(fetchedProducts)).catch(()=>null);
+        }
+        setIsLoading(false);
+      } catch (err) {
+        setIsLoading(false);
       }
-      if (fetchedProducts) {
-        setProducts(fetchedProducts);
-        AsyncStorage.setItem('@cached_home_products', JSON.stringify(fetchedProducts)).catch(()=>null);
-      }
-      setIsLoading(false);
     };
-    
-    // Load local cache first for instant UI
-    AsyncStorage.getItem('@cached_home_restaurants').then(res => {
-      if(res) setRestaurantsList(JSON.parse(res));
-    }).catch(()=>null);
-    AsyncStorage.getItem('@cached_home_products').then(res => {
-      if(res) setProducts(JSON.parse(res));
-    }).catch(()=>null);
 
-    fetchData();
+    loadData();
 
-    const channelFood = supabase.channel(`food_realtime_${Date.now()}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'food_items' }, () => fetchData())
+    const channelTopic = `home_sync_${Math.random().toString(36).substring(2, 9)}`;
+    const channel = supabase.channel(channelTopic)
+      .on("postgres_changes", { event: "*", schema: "public", table: "food_items" }, () => {
+        loadData();
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "restaurants" }, () => {
+        loadData();
+      })
       .subscribe();
 
-    const channelRest = supabase.channel(`rest_realtime_${Date.now()}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'restaurants' }, () => fetchData())
-      .subscribe();
-
-    return () => { 
-      supabase.removeChannel(channelFood); 
-      supabase.removeChannel(channelRest);
+    return () => {
+      supabase.removeChannel(channel);
     };
   }, []);
 
@@ -270,11 +279,12 @@ export default function HomeScreen() {
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 4 }}
         entering={FadeInRight.duration(400).delay(220)}
-        data={activeCategories}
-        keyExtractor={(cat) => cat.id}
+        data={isLoading && products.length === 0 ? [1,2,3,4,5,6] as any : activeCategories}
+        keyExtractor={(cat, idx) => isLoading && products.length === 0 ? String(idx) : cat.id}
         initialNumToRender={6}
         maxToRenderPerBatch={10}
         renderItem={({ item: cat }) => {
+          if (isLoading && products.length === 0) return <CategorySkeleton />;
           const active = selectedCategory === cat.name;
           return (
             <TouchableOpacity
@@ -320,11 +330,12 @@ export default function HomeScreen() {
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 6 }}
         entering={FadeInRight.duration(400).delay(300)}
-        data={restaurantsList}
-        keyExtractor={(item) => item.id}
+        data={isLoading && products.length === 0 ? [1,2,3] as any : restaurantsList}
+        keyExtractor={(item, idx) => isLoading && products.length === 0 ? String(idx) : item.id}
         initialNumToRender={6}
         maxToRenderPerBatch={10}
         renderItem={({ item }) => {
+          if (isLoading && products.length === 0) return <RestaurantSkeleton />;
           const fav = isWishlisted(item.id);
           return (
             <RestaurantCard
@@ -381,8 +392,8 @@ export default function HomeScreen() {
 
 
       <FlatList
-        data={filteredFoods}
-        keyExtractor={(item) => item.id}
+        data={isLoading && products.length === 0 ? [1,2,3,4,5,6] as any : filteredFoods}
+        keyExtractor={(item, idx) => isLoading && products.length === 0 ? String(idx) : item.id}
         numColumns={2}
         columnWrapperStyle={{ justifyContent: "space-between", marginBottom: 12 }}
         contentContainerStyle={[styles.scrollContent, { paddingBottom: 160 }]}
@@ -392,10 +403,17 @@ export default function HomeScreen() {
         ListHeaderComponent={renderHeader}
         ListFooterComponent={renderFooter}
         renderItem={({ item, index }) => {
+          if (isLoading && products.length === 0) {
+            return (
+              <Animated.View style={{ width: "48%" }} entering={FadeInDown.duration(400)}>
+                <FoodCardSkeleton />
+              </Animated.View>
+            );
+          }
           const fav = isWishlisted(item.id);
           const safeImage = item?.images?.[0] || item?.image_url || item?.image;
           return (
-            <Animated.View style={{ width: "48%" }} entering={FadeInDown.duration(400).delay(240 + (index * 20))}>
+            <Animated.View style={{ width: "48%" }} entering={FadeInDown.duration(400)}>
               <TouchableOpacity
                 style={[styles.foodCardItem, { width: "100%", marginBottom: 0 }]}
                 activeOpacity={0.7}

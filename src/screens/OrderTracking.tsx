@@ -16,14 +16,23 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { getStoredOrders, LiveOrder } from "@/lib/ordersStore";
 import { supabase } from "@/lib/supabase";
+import { OrderCardSkeleton } from "@/components/SkeletonLoader";
 
 export default function OrderTrackingScreen() {
   const router = useRouter();
-  const { id: queryId, orderId, initialStatus } = useLocalSearchParams<{ id?: string, orderId?: string, initialStatus?: string }>();
+  const { id: queryId, orderId, status: initialStatus, totalAmount, restaurantName } = useLocalSearchParams<any>();
   const activeId = orderId || queryId;
 
-  const [order, setOrder] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
+  // 1. INSTANT NAVIGATION: Use initial params if available
+  const initialOrder = (initialStatus || totalAmount) ? {
+    id: activeId,
+    status: initialStatus,
+    total: totalAmount,
+    restaurant: restaurantName,
+  } : null;
+
+  const [order, setOrder] = useState<any>(initialOrder);
+  const [loading, setLoading] = useState(!initialOrder);
 
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
@@ -51,28 +60,36 @@ export default function OrderTrackingScreen() {
       const isUUID = activeId.length === 36 && activeId.includes('-');
       const normalizedNumber = '#' + activeId.replace(/^#+/, '');
 
-      let query = supabase.from('orders').select('*');
+      // 2. SINGLE-QUERY DATABASE FETCHING
+      let query = supabase.from('orders').select('*, order_items(*, product:products(*)), restaurant:restaurants(*)');
       if (isUUID) {
         query = query.eq('id', activeId);
       } else {
         query = query.or(`order_number.eq.${normalizedNumber},order_number.eq.${activeId}`);
       }
 
-      const { data, error } = await query.single();
-      if (data) setOrder(data);
-      setLoading(false);
+      try {
+        const { data, error } = await query.single();
+        if (error) {
+          console.warn("loadOrder Supabase Error:", error);
+        }
+        if (data) {
+          setOrder((prev: any) => ({ ...prev, ...data }));
+        }
+      } catch (err) {
+        console.warn("loadOrder unexpected error:", err);
+      } finally {
+        setLoading(false);
+      }
     }
     loadOrder();
 
-    // Subscribe to realtime status changes
-    const channel = supabase.channel(`order_${activeId}`)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'orders' }, 
+    // 3. NON-BLOCKING REALTIME SUBSCRIPTION
+    const channelTopic = `order_${activeId}_${Math.random().toString(36).substring(2, 9)}`;
+    const channel = supabase.channel(channelTopic)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'orders', filter: `id=eq.${activeId}` }, 
         (payload) => {
-          const newOrder = payload.new as any;
-          const normalizedNumber = '#' + activeId.replace(/^#+/, '');
-          if (newOrder.id === activeId || newOrder.order_number === activeId || newOrder.order_number === normalizedNumber) {
-            setOrder(newOrder);
-          }
+          setOrder((prev: any) => ({ ...prev, ...payload.new }));
         }
       ).subscribe();
 
@@ -104,9 +121,11 @@ export default function OrderTrackingScreen() {
     switch (status.toLowerCase()) {
       case "pending": return 0;
       case "preparing": return 1;
-      case "out for delivery": return 2;
-      case "delivered": return 3;
-      case "cancelled": return -1;
+      case "out for delivery": 
+      case "on the way": return 2;
+      case "delivered": 
+      case "completed": return 3;
+      case "cancelled": 
       case "rejected": return -1;
       default: return 0;
     }
@@ -114,6 +133,48 @@ export default function OrderTrackingScreen() {
 
   const currentStep = getStepIndex(order?.status);
   const orderTimeStr = order ? new Date(order.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "10:30 AM";
+
+  // 4. COMPACT SKELETON LOADER
+  if (loading) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: '#F9FAFB' }} edges={['top']}>
+        <StatusBar barStyle="dark-content" />
+        <View style={styles.header}>
+          <TouchableOpacity style={styles.backBtn} onPress={() => router.replace('/(tabs)/orders')}>
+            <Ionicons name="arrow-back" size={24} color="#1A1A1A" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Order Details</Text>
+          <View style={styles.headerRightPlaceholder} />
+        </View>
+        <ScrollView style={{ padding: 20 }}>
+          <OrderCardSkeleton />
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
+  if (!order) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: '#F9FAFB' }}>
+        <StatusBar barStyle="dark-content" />
+        <View style={styles.header}>
+          <TouchableOpacity style={styles.backBtn} onPress={() => router.replace('/(tabs)/orders')}>
+            <Ionicons name="arrow-back" size={24} color="#1A1A1A" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Order Not Found</Text>
+          <View style={styles.headerRightPlaceholder} />
+        </View>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+          <Ionicons name="alert-circle-outline" size={64} color="#9CA3AF" />
+          <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#374151', marginTop: 16 }}>Order not found</Text>
+          <Text style={{ textAlign: 'center', color: '#6B7280', marginTop: 8 }}>We couldn't find the details for this order. It may have been removed.</Text>
+          <TouchableOpacity style={{ marginTop: 24, backgroundColor: '#1B7D3C', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 24 }} onPress={() => router.replace('/(tabs)/orders')}>
+            <Text style={{ color: '#FFFFFF', fontWeight: 'bold' }}>Back to Orders</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   // 🚨 IF ORDER IS CANCELLED / REJECTED:
   if (order?.status?.toLowerCase() === 'cancelled' || order?.status?.toLowerCase() === 'rejected') {

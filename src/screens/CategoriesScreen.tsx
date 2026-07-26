@@ -123,7 +123,6 @@ export default function CategoriesScreen() {
   useEffect(() => {
     loadTopRestaurants();
 
-    // Realtime subscriptions for live background updates
     const channelTopic = `categories_screen_sync_${Math.random()
       .toString(36)
       .substring(2, 9)}`;
@@ -138,7 +137,6 @@ export default function CategoriesScreen() {
       .subscribe();
 
     return () => {
-      channel.unsubscribe();
       supabase.removeChannel(channel);
     };
   }, []);
@@ -257,7 +255,7 @@ export default function CategoriesScreen() {
               <Animated.View
                 key={rest.id}
                 style={{ marginBottom: 16 }}
-                entering={FadeInDown.duration(350).delay(idx * 70)}
+                entering={FadeInDown.duration(350)}
               >
                 <RestaurantCard
                   item={rest}
@@ -273,7 +271,7 @@ export default function CategoriesScreen() {
                       calories: "",
                       deliveryTime: rest.time,
                       description: "",
-                      image: rest.coverImage || rest.image_url || rest.image,
+                      image: rest.coverImage || (rest as any).image_url || rest.image,
                       images: [],
                     })
                   }
@@ -322,7 +320,7 @@ export default function CategoriesScreen() {
           return (
             <Animated.View
               style={styles.dishCardWrap}
-              entering={FadeInDown.duration(300).delay(index * 40)}
+              entering={FadeInDown.duration(300)}
             >
               <TouchableOpacity
                 style={styles.dishCard}
