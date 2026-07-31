@@ -9,7 +9,9 @@ import {
   ActivityIndicator,
   Share,
   StatusBar,
+  FlatList,
 } from "react-native";
+import { FlashList } from "@shopify/flash-list";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Image } from "expo-image";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -244,284 +246,298 @@ export default function RestaurantDetailsScreen() {
       {loading && !restaurant ? (
         <RestaurantHeaderSkeleton />
       ) : (
-      <ScrollView style={styles.scrollView} contentContainerStyle={{ paddingBottom: totalItems > 0 ? 150 : 30 }} showsVerticalScrollIndicator={false}>
-        {/* ── Hero Cover Image ── */}
-        <View style={styles.heroImgWrap}>
-          <Image
-            source={{ uri: coverUri }}
-            style={styles.heroImg}
-            contentFit="cover" cachePolicy="memory-disk" transition={200}
-          />
-        </View>
-
-        {/* ── Restaurant Info Card ── */}
-        <View style={styles.infoSection}>
-          <View style={styles.titleRow}>
-            <Text style={styles.restTitle}>{restaurant?.name || "Pizza House"}</Text>
-            <View style={styles.ratingBadge}>
-              <Ionicons name="star" size={15} color="#F5A623" style={{ marginRight: 4 }} />
-              <Text style={styles.ratingText}>
-                {restaurant?.rating || "4.6"} ({restaurant?.reviews_count || "128"})
-              </Text>
+      <FlashList
+        data={activeTab === "Menu" && !loading ? activeDishes : []}
+        keyExtractor={(item) => item.id}
+        numColumns={2}
+        estimatedItemSize={230}
+        columnWrapperStyle={activeTab === "Menu" && !loading && activeDishes.length > 0 ? { justifyContent: "space-between", paddingHorizontal: 16 } : undefined}
+        contentContainerStyle={{ paddingBottom: totalItems > 0 ? 150 : 30 }}
+        showsVerticalScrollIndicator={false}
+        windowSize={5}
+        removeClippedSubviews={Platform.OS === 'android'}
+        initialNumToRender={8}
+        maxToRenderPerBatch={10}
+        ListHeaderComponent={
+          <>
+            {/* ── Hero Cover Image ── */}
+            <View style={styles.heroImgWrap}>
+              <Image
+                source={{ uri: coverUri }}
+                style={styles.heroImg}
+                contentFit="cover" cachePolicy="memory-disk" transition={200}
+              />
             </View>
-          </View>
 
-          <Text style={styles.tagsSubtitle}>{restaurant?.category || restaurant?.tags || "Italian • Pizza • Fast Food"}</Text>
+            {/* ── Restaurant Info Card ── */}
+            <View style={styles.infoSection}>
+              <View style={styles.titleRow}>
+                <Text style={styles.restTitle}>{restaurant?.name || "Pizza House"}</Text>
+                <View style={styles.ratingBadge}>
+                  <Ionicons name="star" size={15} color="#F5A623" style={{ marginRight: 4 }} />
+                  <Text style={styles.ratingText}>
+                    {restaurant?.rating || "4.6"} ({restaurant?.reviews_count || "128"})
+                  </Text>
+                </View>
+              </View>
 
-          {/* 3-Badge Metric Container */}
-          <View style={styles.metricsContainer}>
-            <View style={styles.metricBox}>
-              <Text style={styles.metricValue}>{restaurant?.delivery_time || restaurant?.prep_time || "15-25 min"}</Text>
-              <Text style={styles.metricLabel}>Delivery Time</Text>
-            </View>
-            <View style={styles.metricDivider} />
-            <View style={styles.metricBox}>
-              <Text style={styles.metricValue}>
-                {restaurant?.delivery_fee !== undefined && restaurant?.delivery_fee !== null ? `$${Number(restaurant.delivery_fee).toFixed(2)}` : "$2.00"}
-              </Text>
-              <Text style={styles.metricLabel}>Delivery Fee</Text>
-            </View>
-            <View style={styles.metricDivider} />
-            <View style={styles.metricBox}>
-              <Text style={styles.metricValue}>
-                {restaurant?.min_order !== undefined && restaurant?.min_order !== null ? `$${Number(restaurant.min_order).toFixed(2)}` : "$0.00"}
-              </Text>
-              <Text style={styles.metricLabel}>Min. Order</Text>
-            </View>
-          </View>
+              <Text style={styles.tagsSubtitle}>{restaurant?.category || restaurant?.tags || "Italian • Pizza • Fast Food"}</Text>
 
-          {/* Navigation Tabs */}
-          <View style={styles.tabsContainer}>
-            <TouchableOpacity
-              style={[styles.tabItem, activeTab === "Menu" && styles.activeTabItem]}
-              activeOpacity={0.7}
-              onPress={() => setActiveTab("Menu")}
-            >
-              <Text style={[styles.tabText, activeTab === "Menu" && styles.activeTabText]}>
-                Menu
-              </Text>
-              {activeTab === "Menu" && <View style={styles.activeTabIndicator} />}
-            </TouchableOpacity>
+              {/* 3-Badge Metric Container */}
+              <View style={styles.metricsContainer}>
+                <View style={styles.metricBox}>
+                  <Text style={styles.metricValue}>{restaurant?.delivery_time || restaurant?.prep_time || "15-25 min"}</Text>
+                  <Text style={styles.metricLabel}>Delivery Time</Text>
+                </View>
+                <View style={styles.metricDivider} />
+                <View style={styles.metricBox}>
+                  <Text style={styles.metricValue}>
+                    {restaurant?.delivery_fee !== undefined && restaurant?.delivery_fee !== null ? `$${Number(restaurant.delivery_fee).toFixed(2)}` : "$2.00"}
+                  </Text>
+                  <Text style={styles.metricLabel}>Delivery Fee</Text>
+                </View>
+                <View style={styles.metricDivider} />
+                <View style={styles.metricBox}>
+                  <Text style={styles.metricValue}>
+                    {restaurant?.min_order !== undefined && restaurant?.min_order !== null ? `$${Number(restaurant.min_order).toFixed(2)}` : "$0.00"}
+                  </Text>
+                  <Text style={styles.metricLabel}>Min. Order</Text>
+                </View>
+              </View>
 
-            <TouchableOpacity
-              style={[styles.tabItem, activeTab === "Reviews" && styles.activeTabItem]}
-              activeOpacity={0.7}
-              onPress={() => setActiveTab("Reviews")}
-            >
-              <Text style={[styles.tabText, activeTab === "Reviews" && styles.activeTabText]}>
-                Reviews
-              </Text>
-              {activeTab === "Reviews" && <View style={styles.activeTabIndicator} />}
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.tabItem, activeTab === "Info" && styles.activeTabItem]}
-              activeOpacity={0.7}
-              onPress={() => setActiveTab("Info")}
-            >
-              <Text style={[styles.tabText, activeTab === "Info" && styles.activeTabText]}>
-                Info
-              </Text>
-              {activeTab === "Info" && <View style={styles.activeTabIndicator} />}
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* ── Tab Content ── */}
-        {activeTab === "Menu" && (
-          <View style={styles.menuSection}>
-            <ScrollView 
-              horizontal 
-              showsHorizontalScrollIndicator={false} 
-              style={{ marginBottom: 16 }} 
-              contentContainerStyle={{ paddingHorizontal: 16, gap: 10 }}
-            >
-              <TouchableOpacity
-                style={{
-                  paddingHorizontal: 16,
-                  paddingVertical: 10,
-                  borderRadius: 20,
-                  backgroundColor: selectedCategory === "All" ? "#1B7D3C" : "#F3F4F6",
-                }}
-                onPress={() => setSelectedCategory("All")}
-              >
-                <Text style={{ color: selectedCategory === "All" ? "#FFFFFF" : "#4B5563", fontWeight: "700" }}>All</Text>
-              </TouchableOpacity>
-              {availableCategories.map(cat => (
+              {/* Navigation Tabs */}
+              <View style={styles.tabsContainer}>
                 <TouchableOpacity
-                  key={cat}
+                  style={[styles.tabItem, activeTab === "Menu" && styles.activeTabItem]}
+                  activeOpacity={0.7}
+                  onPress={() => setActiveTab("Menu")}
+                >
+                  <Text style={[styles.tabText, activeTab === "Menu" && styles.activeTabText]}>
+                    Menu
+                  </Text>
+                  {activeTab === "Menu" && <View style={styles.activeTabIndicator} />}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.tabItem, activeTab === "Reviews" && styles.activeTabItem]}
+                  activeOpacity={0.7}
+                  onPress={() => setActiveTab("Reviews")}
+                >
+                  <Text style={[styles.tabText, activeTab === "Reviews" && styles.activeTabText]}>
+                    Reviews
+                  </Text>
+                  {activeTab === "Reviews" && <View style={styles.activeTabIndicator} />}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.tabItem, activeTab === "Info" && styles.activeTabItem]}
+                  activeOpacity={0.7}
+                  onPress={() => setActiveTab("Info")}
+                >
+                  <Text style={[styles.tabText, activeTab === "Info" && styles.activeTabText]}>
+                    Info
+                  </Text>
+                  {activeTab === "Info" && <View style={styles.activeTabIndicator} />}
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* ── Category Selectors (Menu Only) ── */}
+            {activeTab === "Menu" && (
+              <ScrollView 
+                horizontal 
+                showsHorizontalScrollIndicator={false} 
+                style={{ marginBottom: 16 }} 
+                contentContainerStyle={{ paddingHorizontal: 16, gap: 10 }}
+              >
+                <TouchableOpacity
                   style={{
                     paddingHorizontal: 16,
                     paddingVertical: 10,
                     borderRadius: 20,
-                    backgroundColor: selectedCategory === cat ? "#1B7D3C" : "#F3F4F6",
-                    flexDirection: "row",
-                    alignItems: "center",
-                    gap: 6
+                    backgroundColor: selectedCategory === "All" ? "#1B7D3C" : "#F3F4F6",
                   }}
-                  onPress={() => setSelectedCategory(cat)}
+                  onPress={() => setSelectedCategory("All")}
                 >
-                  <Text>{getCategoryEmoji(cat)}</Text>
-                  <Text style={{ color: selectedCategory === cat ? "#FFFFFF" : "#4B5563", fontWeight: "700" }}>{cat}</Text>
+                  <Text style={{ color: selectedCategory === "All" ? "#FFFFFF" : "#4B5563", fontWeight: "700" }}>All</Text>
                 </TouchableOpacity>
-              ))}
-            </ScrollView>
-
-            {loading && foodItems.length === 0 ? (
-              <Animated.View style={[styles.categoryGroup, { paddingHorizontal: 16 }]} entering={FadeInDown.duration(400)}>
+                {availableCategories.map(cat => (
+                  <TouchableOpacity
+                    key={cat}
+                    style={{
+                      paddingHorizontal: 16,
+                      paddingVertical: 10,
+                      borderRadius: 20,
+                      backgroundColor: selectedCategory === cat ? "#1B7D3C" : "#F3F4F6",
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 6
+                    }}
+                    onPress={() => setSelectedCategory(cat)}
+                  >
+                    <Text>{getCategoryEmoji(cat)}</Text>
+                    <Text style={{ color: selectedCategory === cat ? "#FFFFFF" : "#4B5563", fontWeight: "700" }}>{cat}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
+          </>
+        }
+        renderItem={({ item }) => (
+          <TouchableOpacity
+            style={styles.dishGridCard}
+            activeOpacity={0.7}
+            onPress={() => router.push(`/product/${item.id}`)}
+          >
+            <Image
+              source={{ uri: item.image }}
+              style={styles.dishGridImg}
+              contentFit="cover" cachePolicy="memory-disk" transition={200}
+              recyclingKey={item.id}
+            />
+            <View style={styles.dishGridRatingBadge}>
+              <Ionicons name="star" size={10} color="#F5A623" />
+              <Text style={styles.dishGridRatingText}>{item.rating || "4.8"}</Text>
+            </View>
+            <View style={styles.dishGridInfo}>
+              <View style={{ minHeight: 40, justifyContent: 'flex-start' }}>
+                <Text style={styles.dishGridName} numberOfLines={2}>
+                  {item.name}
+                </Text>
+              </View>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+                <Text style={styles.dishGridPrice}>{item.priceFormatted}</Text>
+                {(() => {
+                  const cartItem = cartItems.find(c => c.id === item.id);
+                  if (cartItem) {
+                    return (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#F0FDF4', borderRadius: 20, paddingHorizontal: 6, paddingVertical: 4 }}>
+                        <TouchableOpacity 
+                          onPress={(e) => { e.stopPropagation(); cartItem.quantity > 1 ? updateQuantity(item.id, -1) : removeFromCart(item.id); }}
+                          style={{ width: 26, height: 26, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF', borderRadius: 13, shadowColor: '#000', shadowOffset: {width:0, height:1}, shadowOpacity: 0.1, shadowRadius: 2, elevation: 1 }}
+                        >
+                          <Ionicons name="remove" size={16} color="#1B7D3C" />
+                        </TouchableOpacity>
+                        <Text style={{ marginHorizontal: 10, fontSize: 14, fontWeight: '700', color: '#1B7D3C' }}>{cartItem.quantity}</Text>
+                        <TouchableOpacity 
+                          onPress={(e) => { e.stopPropagation(); updateQuantity(item.id, 1); }}
+                          style={{ width: 26, height: 26, alignItems: 'center', justifyContent: 'center', backgroundColor: '#1B7D3C', borderRadius: 13 }}
+                        >
+                          <Ionicons name="add" size={16} color="#FFFFFF" />
+                        </TouchableOpacity>
+                      </View>
+                    );
+                  }
+                  return (
+                    <TouchableOpacity
+                      style={{
+                        width: 32,
+                        height: 32,
+                        borderRadius: 16,
+                        backgroundColor: "#1B7D3C",
+                        justifyContent: "center",
+                        alignItems: "center",
+                      }}
+                      activeOpacity={0.7}
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        addToCart(item, 1);
+                      }}
+                    >
+                      <Ionicons name="add" size={20} color="#FFFFFF" />
+                    </TouchableOpacity>
+                  );
+                })()}
+              </View>
+            </View>
+          </TouchableOpacity>
+        )}
+        ListEmptyComponent={
+          activeTab === "Menu" ? (
+            loading && foodItems.length === 0 ? (
+              <View style={[styles.categoryGroup, { paddingHorizontal: 16 }]}>
                 <View style={styles.dishGridContainer}>
                   {[1, 2, 3, 4].map((i) => (
                     <FoodCardSkeleton key={i} />
                   ))}
                 </View>
-              </Animated.View>
-            ) : activeDishes.length === 0 ? (
+              </View>
+            ) : (
               <View style={styles.emptyContainer}>
                 <Text style={styles.emptyEmoji}>🍽️</Text>
                 <Text style={styles.emptyText}>No dishes available in this category.</Text>
               </View>
-            ) : (
-              <Animated.View style={[styles.categoryGroup, { paddingHorizontal: 16 }]} entering={FadeInDown.duration(400)}>
-                <View style={styles.dishGridContainer}>
-                  {activeDishes.map((item) => (
-                    <TouchableOpacity
-                      key={item.id}
-                      style={styles.dishGridCard}
-                      activeOpacity={0.7}
-                      onPress={() => router.push(`/product/${item.id}`)}
-                    >
-                      <Image
-                        source={{ uri: item.image }}
-                        style={styles.dishGridImg}
-                        contentFit="cover" cachePolicy="memory-disk" transition={200}
-                      />
-                      <View style={styles.dishGridRatingBadge}>
-                        <Ionicons name="star" size={10} color="#F5A623" />
-                        <Text style={styles.dishGridRatingText}>{item.rating || "4.8"}</Text>
-                      </View>
-                      <View style={styles.dishGridInfo}>
-                        <View style={{ minHeight: 40, justifyContent: 'flex-start' }}>
-                          <Text style={styles.dishGridName} numberOfLines={2}>
-                            {item.name}
-                          </Text>
-                        </View>
-                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
-                          <Text style={styles.dishGridPrice}>{item.priceFormatted}</Text>
-                          {(() => {
-                            const cartItem = cartItems.find(c => c.id === item.id);
-                            if (cartItem) {
-                              return (
-                                <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#F0FDF4', borderRadius: 20, paddingHorizontal: 6, paddingVertical: 4 }}>
-                                  <TouchableOpacity 
-                                    onPress={(e) => { e.stopPropagation(); cartItem.quantity > 1 ? updateQuantity(item.id, -1) : removeFromCart(item.id); }}
-                                    style={{ width: 26, height: 26, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF', borderRadius: 13, shadowColor: '#000', shadowOffset: {width:0, height:1}, shadowOpacity: 0.1, shadowRadius: 2, elevation: 1 }}
-                                  >
-                                    <Ionicons name="remove" size={16} color="#1B7D3C" />
-                                  </TouchableOpacity>
-                                  <Text style={{ marginHorizontal: 10, fontSize: 14, fontWeight: '700', color: '#1B7D3C' }}>{cartItem.quantity}</Text>
-                                  <TouchableOpacity 
-                                    onPress={(e) => { e.stopPropagation(); updateQuantity(item.id, 1); }}
-                                    style={{ width: 26, height: 26, alignItems: 'center', justifyContent: 'center', backgroundColor: '#1B7D3C', borderRadius: 13 }}
-                                  >
-                                    <Ionicons name="add" size={16} color="#FFFFFF" />
-                                  </TouchableOpacity>
-                                </View>
-                              );
-                            }
-                            return (
-                              <TouchableOpacity
-                                style={{
-                                  width: 32,
-                                  height: 32,
-                                  borderRadius: 16,
-                                  backgroundColor: "#1B7D3C",
-                                  justifyContent: "center",
-                                  alignItems: "center",
-                                }}
-                                activeOpacity={0.7}
-                                onPress={(e) => {
-                                  e.stopPropagation();
-                                  addToCart(item, 1);
-                                }}
-                              >
-                                <Ionicons name="add" size={20} color="#FFFFFF" />
-                              </TouchableOpacity>
-                            );
-                          })()}
-                        </View>
-                      </View>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </Animated.View>
-            )}
-          </View>
-        )}
-
-        {activeTab === "Reviews" && (
-          <View style={styles.tabContentSection}>
-            <View style={styles.reviewSummary}>
-              <Text style={styles.bigRatingText}>{restaurant?.rating || "4.8"}</Text>
-              <View>
-                <View style={{ flexDirection: "row", marginBottom: 4 }}>
-                  {[...Array(5)].map((_, i) => (
-                    <Ionicons key={i} name="star" size={16} color="#F5A623" style={{ marginRight: 2 }} />
-                  ))}
-                </View>
-                <Text style={styles.reviewSubtext}>Based on {reviews.length} reviews</Text>
-              </View>
-            </View>
-
-            {reviews.length === 0 ? (
-              <View style={styles.emptyReviewsContainer}>
-                <Text style={styles.emptyEmoji}>🌟</Text>
-                <Text style={styles.emptyText}>No reviews yet. Be the first to rate this restaurant!</Text>
-              </View>
-            ) : (
-              reviews.map(review => (
-                <View key={review.id} style={styles.sampleReviewCard}>
-                  <View style={styles.reviewHeader}>
-                    <Text style={styles.reviewerName}>{review.customer_name || "Customer"}</Text>
-                    <Text style={styles.reviewDate}>
-                      {new Date(review.created_at).toLocaleDateString()}
-                    </Text>
+            )
+          ) : null
+        }
+        ListFooterComponent={
+          <>
+            {activeTab === "Reviews" && (
+              <View style={styles.tabContentSection}>
+                <View style={styles.reviewSummary}>
+                  <Text style={styles.bigRatingText}>{restaurant?.rating || "4.8"}</Text>
+                  <View>
+                    <View style={{ flexDirection: "row", marginBottom: 4 }}>
+                      {[...Array(5)].map((_, i) => (
+                        <Ionicons key={i} name="star" size={16} color="#F5A623" style={{ marginRight: 2 }} />
+                      ))}
+                    </View>
+                    <Text style={styles.reviewSubtext}>Based on {reviews.length} reviews</Text>
                   </View>
-                  <View style={{ flexDirection: "row", marginVertical: 4 }}>
-                    {[...Array(5)].map((_, i) => (
-                      <Ionicons key={i} name={i < Math.floor(review.rating || 5) ? "star" : "star-outline"} size={13} color="#F5A623" style={{ marginRight: 2 }} />
-                    ))}
-                  </View>
-                  <Text style={styles.reviewComment}>
-                    {review.comment || "Great experience!"}
-                  </Text>
                 </View>
-              ))
+
+                {reviews.length === 0 ? (
+                  <View style={styles.emptyReviewsContainer}>
+                    <Text style={styles.emptyEmoji}>🌟</Text>
+                    <Text style={styles.emptyText}>No reviews yet. Be the first to rate this restaurant!</Text>
+                  </View>
+                ) : (
+                  reviews.map(review => (
+                    <View key={review.id} style={styles.sampleReviewCard}>
+                      <View style={styles.reviewHeader}>
+                        <Text style={styles.reviewerName}>{review.customer_name || "Customer"}</Text>
+                        <Text style={styles.reviewDate}>
+                          {new Date(review.created_at).toLocaleDateString()}
+                        </Text>
+                      </View>
+                      <View style={{ flexDirection: "row", marginVertical: 4 }}>
+                        {[...Array(5)].map((_, i) => (
+                          <Ionicons key={i} name={i < Math.floor(review.rating || 5) ? "star" : "star-outline"} size={13} color="#F5A623" style={{ marginRight: 2 }} />
+                        ))}
+                      </View>
+                      <Text style={styles.reviewComment}>
+                        {review.comment || "Great experience!"}
+                      </Text>
+                    </View>
+                  ))
+                )}
+              </View>
             )}
-          </View>
-        )}
 
-        {activeTab === "Info" && (
-          <View style={styles.tabContentSection}>
-            <Text style={styles.infoHeading}>About {restaurant?.name}</Text>
-            <Text style={styles.infoDescription}>{restaurant?.description}</Text>
+            {activeTab === "Info" && (
+              <View style={styles.tabContentSection}>
+                <Text style={styles.infoHeading}>About {restaurant?.name}</Text>
+                <Text style={styles.infoDescription}>{restaurant?.description}</Text>
 
-            <View style={styles.infoRow}>
-              <Ionicons name="location-outline" size={20} color="#1B7D3C" />
-              <Text style={styles.infoRowText}>{restaurant?.address}</Text>
-            </View>
+                <View style={styles.infoRow}>
+                  <Ionicons name="location-outline" size={20} color="#1B7D3C" />
+                  <Text style={styles.infoRowText}>{restaurant?.address}</Text>
+                </View>
 
-            <View style={styles.infoRow}>
-              <Ionicons name="call-outline" size={20} color="#1B7D3C" />
-              <Text style={styles.infoRowText}>{restaurant?.phone}</Text>
-            </View>
+                <View style={styles.infoRow}>
+                  <Ionicons name="call-outline" size={20} color="#1B7D3C" />
+                  <Text style={styles.infoRowText}>{restaurant?.phone}</Text>
+                </View>
 
-            <View style={styles.infoRow}>
-              <Ionicons name="time-outline" size={20} color="#1B7D3C" />
-              <Text style={styles.infoRowText}>Open Daily • 8:00 AM – 11:30 PM</Text>
-            </View>
-          </View>
-        )}
-      </ScrollView>
+                <View style={styles.infoRow}>
+                  <Ionicons name="time-outline" size={20} color="#1B7D3C" />
+                  <Text style={styles.infoRowText}>Open Daily • 8:00 AM – 11:30 PM</Text>
+                </View>
+              </View>
+            )}
+          </>
+        }
+      />
       )}
 
       {/* ── Fixed Bottom Cart Button ── */}

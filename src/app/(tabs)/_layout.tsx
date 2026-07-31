@@ -1,15 +1,23 @@
 import React from "react";
 import { Tabs } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { View, Text, StyleSheet, Platform } from "react-native";
+import { View, Text, StyleSheet, Platform, Alert } from "react-native";
 import { useCart } from "@/lib/CartContext";
 import { usePushNotifications } from "@/lib/usePushNotifications";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "@/lib/supabase";
 import { useEffect } from "react";
 import * as Notifications from "expo-notifications";
+import Constants from "expo-constants";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 export default function TabsLayout() {
+  const insets = useSafeAreaInsets();
+  
+  // Dynamic bottom calculation to strictly force Android upward
+  const androidBottomPadding = Math.max(insets.bottom, 12);
+  const androidHeight = 65 + androidBottomPadding;
+
   const { totalItems } = useCart();
   const { expoPushToken } = usePushNotifications();
 
@@ -68,15 +76,20 @@ export default function TabsLayout() {
                 body = 'Your food has arrived. Enjoy your meal from PuntEats!';
               }
 
-              // Trigger local notification immediately
-              Notifications.scheduleNotificationAsync({
-                content: {
-                  title,
-                  body,
-                  sound: true,
-                },
-                trigger: null,
-              });
+              // Trigger notification based on platform capability
+              if (Platform.OS === 'android' && Constants.appOwnership === 'expo') {
+                // Fallback for Expo Go on Android since native push is removed in SDK 53
+                Alert.alert(title, body, [{ text: "OK" }]);
+              } else {
+                Notifications.scheduleNotificationAsync({
+                  content: {
+                    title,
+                    body,
+                    sound: true,
+                  },
+                  trigger: null,
+                });
+              }
             }
           }
         )
@@ -97,21 +110,31 @@ export default function TabsLayout() {
       screenOptions={{
         headerShown: false,
         lazy: true,
-        sceneContainerStyle: { backgroundColor: "#F8F8F8" },
+        sceneContainerStyle: { 
+          backgroundColor: "#F8F8F8",
+          paddingBottom: Platform.OS === 'android' ? androidHeight : 0,
+        },
+        tabBarHideOnKeyboard: false,
         tabBarActiveTintColor: "#1B7D3C",
         tabBarInactiveTintColor: "#6B6B6B",
         tabBarStyle: {
           backgroundColor: "#FFFFFF",
           borderTopWidth: 1,
           borderTopColor: "#F3F4F6",
-          height: Platform.OS === "ios" ? 88 : 68,
+          height: Platform.OS === 'android' ? androidHeight : 88,
           paddingTop: 8,
-          paddingBottom: Platform.OS === "ios" ? 28 : 10,
+          paddingBottom: Platform.OS === 'android' ? androidBottomPadding : 28,
+          position: Platform.OS === 'android' ? 'absolute' : 'relative',
+          bottom: Platform.OS === 'android' ? 0 : undefined,
+          left: Platform.OS === 'android' ? 0 : undefined,
+          right: Platform.OS === 'android' ? 0 : undefined,
+          display: 'flex',
           elevation: 8,
+          zIndex: 9999,
           shadowColor: "#000",
           shadowOffset: { width: 0, height: -2 },
-          shadowOpacity: 0.04,
-          shadowRadius: 8,
+          shadowOpacity: 0.1,
+          shadowRadius: 4,
         },
         tabBarLabelStyle: {
           fontSize: 12,

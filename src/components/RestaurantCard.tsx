@@ -26,7 +26,7 @@ interface RestaurantCardProps {
 
 const DEFAULT_COVER = "https://images.unsplash.com/photo-1544025162-d76694265947?w=600&auto=format&fit=crop&q=80";
 
-export const RestaurantCard: React.FC<RestaurantCardProps> = ({
+export const RestaurantCard: React.FC<RestaurantCardProps> = React.memo(({
   item,
   isFav,
   onToggleWishlist,
@@ -101,7 +101,12 @@ export const RestaurantCard: React.FC<RestaurantCardProps> = ({
       </View>
     </TouchableOpacity>
   );
-};
+}, (prevProps, nextProps) => {
+  return (
+    prevProps.item.id === nextProps.item.id &&
+    prevProps.isFav === nextProps.isFav
+  );
+});
 
 const styles = StyleSheet.create({
   card: {

@@ -103,6 +103,39 @@ export default function PaymentSelectionScreen() {
         if (data && !result.data) setDbOrderId(data.id);
       }).catch(() => null);
 
+      // Optimistically inject the new order into the cache so the Orders tab is instant
+      try {
+        const cached = await AsyncStorage.getItem('@cached_my_orders');
+        let currentOrders = cached ? JSON.parse(cached) : [];
+        
+        let itemsStr = "Order items";
+        if (cartItems.length > 0) {
+          itemsStr = cartItems.map(i => `${i.quantity || 1}x ${i.name}`).join(", ");
+        }
+
+        const newMappedOrder = {
+          id: orderPayload.order_number,
+          dbId: result.data?.id || 'temp-id',
+          customerName: orderPayload.customer_name,
+          restaurant: orderPayload.restaurant_name,
+          items: itemsStr,
+          address: orderPayload.delivery_address,
+          total: `$${computedTotal.toFixed(2)}`,
+          status: 'Pending',
+          time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          phone: orderPayload.customer_phone,
+          paymentMethod: orderPayload.payment_method,
+          createdAt: Date.now(),
+          deliveryFee: "$1.50",
+          subtotal: `$${Math.max(0, computedTotal - 1.5).toFixed(2)}`
+        };
+
+        currentOrders.unshift(newMappedOrder);
+        await AsyncStorage.setItem('@cached_my_orders', JSON.stringify(currentOrders));
+      } catch (err) {
+        console.warn('Failed to optimistically cache order', err);
+      }
+
       clearCart();
 
       setSuccessModalVisible(true);
@@ -120,7 +153,17 @@ export default function PaymentSelectionScreen() {
 
   const handleTrackMyOrder = () => {
     setSuccessModalVisible(false);
-    router.replace(`/order-tracking/${dbOrderId || placedOrderId.replace('#', '')}`);
+    
+    // Dismiss checkout/payment stack and go to Orders tab first
+    if (router.canDismiss()) {
+      router.dismissAll();
+    }
+    router.replace('/(tabs)/orders');
+    
+    // Wait slightly for the tab to mount, then push the tracking page
+    setTimeout(() => {
+      router.push(`/order-details/${dbOrderId || placedOrderId.replace('#', '')}`);
+    }, 50);
   };
 
   return (

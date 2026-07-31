@@ -131,16 +131,25 @@ export default function CheckoutScreen() {
         {
           text: "Track Order",
           onPress: () => {
-            router.replace({
-              pathname: `/order-tracking/[id]`,
-              params: {
-                id: guaranteedId,
-                from: 'checkout',
-                status: 'Pending',
-                totalAmount: finalTotal,
-                restaurantName: restaurantName
-              }
-            });
+            // Dismiss checkout stack and go to Orders tab first
+            if (router.canDismiss()) {
+              router.dismissAll();
+            }
+            router.replace('/(tabs)/orders');
+            
+            // Wait slightly for the tab to mount, then push the tracking page on top of it
+            setTimeout(() => {
+              router.push({
+                pathname: `/order-details/[id]`,
+                params: {
+                  id: guaranteedId,
+                  from: 'checkout',
+                  status: 'Pending',
+                  totalAmount: finalTotal,
+                  restaurantName: restaurantName
+                }
+              });
+            }, 50);
           }
         },
       ]

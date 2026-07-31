@@ -5,6 +5,11 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
+    "notification": {
+      "icon": "./assets/images/icon.png",
+      "color": "#1B7D3C",
+      "iosDisplayInForeground": true
+    },
     "scheme": [
       "punteats",
       "com.googleusercontent.apps.964294676461-l1sggb0f3cuq8ard65ihhskenie7irlb"
@@ -30,10 +35,14 @@
       "package": "com.punteats.app",
       "versionCode": 1,
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
+        "backgroundColor": "#FFFFFF",
+        "foregroundImage": "./assets/images/icon.png",
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
+      },
+      "notification": {
+        "icon": "./assets/images/icon.png",
+        "color": "#1B7D3C"
       },
       "predictiveBackGestureEnabled": false,
       "config": {
@@ -44,7 +53,8 @@
       "permissions": [
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_FINE_LOCATION"
-      ]
+      ],
+      "jsEngine": "hermes"
     },
     "web": {
       "output": "static",
@@ -77,7 +87,8 @@
     ],
     "experiments": {
       "typedRoutes": true,
-      "reactCompiler": true
+      "reactCompiler": true,
+      "newArchEnabled": true
     },
     "extra": {
       "router": {},

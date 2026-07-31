@@ -4,14 +4,22 @@ import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
 
-// Set notification handler to show alerts when the app is foregrounded
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-  }),
-});
+// Only set the handler if we are NOT on Expo Go for Android, 
+// since Expo completely removed the native module in SDK 53 causing it to throw on access.
+if (!(Platform.OS === 'android' && Constants.appOwnership === 'expo')) {
+  try {
+    Notifications.setNotificationHandler({
+      handleNotification: async () => ({
+        shouldShowBanner: true,
+        shouldShowList: true,
+        shouldPlaySound: true,
+        shouldSetBadge: false,
+      }),
+    });
+  } catch (e) {
+    console.warn("Expo Go push notifications handler error suppressed");
+  }
+}
 
 export interface PushNotificationState {
   expoPushToken?: Notifications.ExpoPushToken;
@@ -26,6 +34,11 @@ export const usePushNotifications = (): PushNotificationState => {
   const responseListener = useRef<Notifications.Subscription>();
 
   async function registerForPushNotificationsAsync() {
+    if (Platform.OS === 'android' && Constants.appOwnership === 'expo') {
+      console.warn("Push notifications are not supported in Expo Go on Android. Skipping.");
+      return undefined;
+    }
+    
     let token;
 
     if (Platform.OS === 'android') {

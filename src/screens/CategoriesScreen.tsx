@@ -7,8 +7,8 @@ import {
   Dimensions,
   StatusBar,
   Animated as RNAnimated,
-  FlatList,
 } from "react-native";
+import { FlashList } from "@shopify/flash-list";
 import { Image } from "expo-image";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -252,10 +252,9 @@ export default function CategoriesScreen() {
           {restaurants.map((rest, idx) => {
             const fav = isWishlisted(`rest_${rest.id}`);
             return (
-              <Animated.View
+              <View
                 key={rest.id}
                 style={{ marginBottom: 16 }}
-                entering={FadeInDown.duration(350)}
               >
                 <RestaurantCard
                   item={rest}
@@ -277,7 +276,7 @@ export default function CategoriesScreen() {
                   }
                   onPress={() => router.push(`/restaurant/${rest.id}`)}
                 />
-              </Animated.View>
+              </View>
             );
           })}
         </View>
@@ -303,24 +302,26 @@ export default function CategoriesScreen() {
         </View>
       </SafeAreaView>
 
-      <FlatList
-        data={dishes}
+      <FlashList
+        data={activeTab === "Dishes" ? validDishes : []}
         keyExtractor={(item) => item.id}
         numColumns={2}
+        estimatedItemSize={230}
         columnWrapperStyle={{ justifyContent: "space-between", paddingHorizontal: 18 }}
         contentContainerStyle={{ paddingBottom: 40 }}
         showsVerticalScrollIndicator={false}
         initialNumToRender={6}
         maxToRenderPerBatch={10}
+        windowSize={5}
+        removeClippedSubviews={Platform.OS === 'android'}
         ListHeaderComponent={renderHeader}
         ListFooterComponent={renderFooter}
         ListEmptyComponent={renderEmptyDishes}
         renderItem={({ item, index }) => {
           const safeImage = item?.images?.[0] || item?.image_url || item?.image;
           return (
-            <Animated.View
+            <View
               style={styles.dishCardWrap}
-              entering={FadeInDown.duration(300)}
             >
               <TouchableOpacity
                 style={styles.dishCard}
@@ -365,7 +366,7 @@ export default function CategoriesScreen() {
                   </View>
                 </View>
               </TouchableOpacity>
-            </Animated.View>
+            </View>
           );
         }}
       />

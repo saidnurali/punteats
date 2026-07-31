@@ -59,14 +59,14 @@ export const SkeletonLoader: React.FC<SkeletonLoaderProps> = ({
 // Ready-made skeletons for Home Screen
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
-export const CategorySkeleton = () => (
+export const CategorySkeleton = React.memo(() => (
   <Animated.View style={{ alignItems: 'center', marginRight: 18, width: 64 }}>
     <SkeletonLoader width={60} height={60} borderRadius={16} />
     <SkeletonLoader width={48} height={12} borderRadius={6} style={{ marginTop: 6 }} />
   </Animated.View>
-);
+));
 
-export const FoodCardSkeleton = () => (
+export const FoodCardSkeleton = React.memo(() => (
   <Animated.View style={styles.foodCardItem}>
     <SkeletonLoader width="100%" height={110} borderRadius={12} />
     <SkeletonLoader width="80%" height={14} borderRadius={6} style={{ marginTop: 10 }} />
@@ -75,15 +75,15 @@ export const FoodCardSkeleton = () => (
       <SkeletonLoader width={24} height={24} borderRadius={12} />
     </View>
   </Animated.View>
-);
+));
 
-export const RestaurantSkeleton = () => (
+export const RestaurantSkeleton = React.memo(() => (
   <Animated.View style={styles.restaurantCardItem}>
     <SkeletonLoader width={260} height={140} borderRadius={16} />
     <SkeletonLoader width={180} height={16} borderRadius={8} style={{ marginTop: 12, marginHorizontal: 12 }} />
     <SkeletonLoader width={120} height={12} borderRadius={6} style={{ marginTop: 8, marginHorizontal: 12 }} />
   </Animated.View>
-);
+));
 
 const styles = StyleSheet.create({
   skeleton: {
@@ -115,7 +115,7 @@ const styles = StyleSheet.create({
   }
 });
 
-export const OrderCardSkeleton = () => (
+export const OrderCardSkeleton = React.memo(() => (
   <View style={{ backgroundColor: '#FFFFFF', borderRadius: 16, padding: 16, marginBottom: 14, borderWidth: 1, borderColor: '#F3F4F6' }}>
     <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -136,9 +136,9 @@ export const OrderCardSkeleton = () => (
       <SkeletonLoader width={100} height={36} borderRadius={18} />
     </View>
   </View>
-);
+));
 
-export const ProductDetailSkeleton = () => (
+export const ProductDetailSkeleton = React.memo(() => (
   <View style={{ flex: 1, backgroundColor: '#F8F8F8' }}>
     <SkeletonLoader width="100%" height={320} borderRadius={0} />
     <View style={{ padding: 20, backgroundColor: '#FFFFFF', borderTopLeftRadius: 30, borderTopRightRadius: 30, marginTop: -30 }}>
@@ -153,9 +153,9 @@ export const ProductDetailSkeleton = () => (
       </View>
     </View>
   </View>
-);
+));
 
-export const RestaurantHeaderSkeleton = () => (
+export const RestaurantHeaderSkeleton = React.memo(() => (
   <View style={{ backgroundColor: '#F8F8F8' }}>
     <SkeletonLoader width="100%" height={220} borderRadius={0} />
     <View style={{ padding: 20, backgroundColor: '#FFFFFF', borderTopLeftRadius: 30, borderTopRightRadius: 30, marginTop: -30, alignItems: 'center' }}>
@@ -169,4 +169,4 @@ export const RestaurantHeaderSkeleton = () => (
       </View>
     </View>
   </View>
-);
+));

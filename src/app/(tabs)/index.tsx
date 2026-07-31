@@ -13,6 +13,7 @@ import {
   StatusBar,
   Modal,
 } from "react-native";
+import { FlashList } from "@shopify/flash-list";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Image } from "expo-image";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -372,13 +373,13 @@ export default function HomeScreen() {
         <TouchableOpacity activeOpacity={0.8} onPress={() => router.push('/categories')}><Text style={styles.seeAll}>See all</Text></TouchableOpacity>
       </Animated.View>
 
-      <Animated.FlatList
+      <FlashList
         horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 4 }}
-        entering={FadeInRight.duration(400).delay(220)}
         data={isLoading && allDishes.length === 0 ? [1,2,3,4,5,6] as any : categoriesWithItems}
         keyExtractor={(cat, idx) => isLoading && allDishes.length === 0 ? String(idx) : cat.id}
+        estimatedItemSize={80}
         initialNumToRender={6}
         maxToRenderPerBatch={10}
         renderItem={({ item: cat }) => {
@@ -420,15 +421,17 @@ export default function HomeScreen() {
         <TouchableOpacity><Text style={styles.seeAll}>See all</Text></TouchableOpacity>
       </Animated.View>
 
-      <Animated.FlatList
+      <FlashList
         horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 6 }}
-        entering={FadeInRight.duration(400).delay(300)}
         data={isLoading && allDishes.length === 0 ? [1,2,3] as any : restaurantsList}
         keyExtractor={(item, idx) => isLoading && allDishes.length === 0 ? String(idx) : item.id}
+        estimatedItemSize={280}
         initialNumToRender={6}
         maxToRenderPerBatch={10}
+        windowSize={5}
+        removeClippedSubviews={Platform.OS === 'android'}
         renderItem={({ item }) => {
           if (isLoading && allDishes.length === 0) return <RestaurantSkeleton />;
           const fav = isWishlisted(item.id);
@@ -486,15 +489,18 @@ export default function HomeScreen() {
       </View>
 
 
-      <FlatList
+      <FlashList
         data={isLoading && allDishes.length === 0 ? [1,2,3,4,5,6] as any : filteredFoods}
         keyExtractor={(item, idx) => isLoading && allDishes.length === 0 ? String(idx) : item.id}
         numColumns={2}
+        estimatedItemSize={230}
         columnWrapperStyle={{ justifyContent: "space-between", marginBottom: 12 }}
         contentContainerStyle={[styles.scrollContent, { paddingBottom: 160 }]}
         showsVerticalScrollIndicator={false}
         initialNumToRender={6}
         maxToRenderPerBatch={10}
+        windowSize={5}
+        removeClippedSubviews={Platform.OS === 'android'}
         ListEmptyComponent={
           !isLoading ? (
             <View style={{ padding: 40, alignItems: 'center', marginTop: 40 }}>
@@ -510,22 +516,22 @@ export default function HomeScreen() {
         renderItem={({ item, index }) => {
           if (isLoading && allDishes.length === 0) {
             return (
-              <Animated.View style={{ width: "48%" }} entering={FadeInDown.duration(400)}>
+              <View style={{ width: "48%" }}>
                 <FoodCardSkeleton />
-              </Animated.View>
+              </View>
             );
           }
           const fav = isWishlisted(item.id);
           const safeImage = item?.images?.[0] || item?.image_url || item?.image;
           return (
-            <Animated.View style={{ width: "48%" }} entering={FadeInDown.duration(400)}>
+            <View style={{ width: "48%" }}>
               <TouchableOpacity
                 style={[styles.foodCardItem, { width: "100%", marginBottom: 0 }]}
                 activeOpacity={0.7}
                 onPress={() => router.push(`/product/${item.id}`)}
               >
                 <View style={styles.foodImgWrap}>
-                  <Image source={{ uri: safeImage }} style={styles.foodImg} contentFit="cover" cachePolicy="memory-disk" transition={200} />
+                  <Image source={{ uri: safeImage }} style={styles.foodImg} contentFit="cover" cachePolicy="memory-disk" transition={200} recyclingKey={item.id} />
                   <View style={styles.foodRatingBadge}>
                     <Ionicons name="star" size={12} color="#F5A623" />
                     <Text style={styles.foodRatingText}>{item.rating}</Text>
@@ -581,7 +587,7 @@ export default function HomeScreen() {
                   })()}
                 </View>
               </TouchableOpacity>
-            </Animated.View>
+            </View>
           );
         }}
       />

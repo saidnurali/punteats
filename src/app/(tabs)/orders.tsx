@@ -239,9 +239,7 @@ export default function OrdersScreen() {
                   pathname: '/order-details/[id]',
                   params: { 
                     id: order.id,
-                    status: order.status,
-                    totalAmount: order.total,
-                    restaurantName: order.restaurant
+                    orderData: JSON.stringify(order)
                   }
                 })}
               >

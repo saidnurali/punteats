@@ -4,10 +4,11 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  FlatList,
+  Platform,
   StatusBar,
   Dimensions,
 } from "react-native";
+import { FlashList } from "@shopify/flash-list";
 import { Image } from "expo-image";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -72,17 +73,22 @@ export default function WishlistScreen() {
           </View>
         </View>
 
-        <FlatList
+        <FlashList
           data={validItems}
           keyExtractor={(item) => item.id}
           numColumns={2}
+          estimatedItemSize={200}
           contentContainerStyle={styles.scrollContent}
           columnWrapperStyle={styles.columnWrapper}
           showsVerticalScrollIndicator={false}
+          windowSize={5}
+          removeClippedSubviews={Platform.OS === 'android'}
+          initialNumToRender={8}
+          maxToRenderPerBatch={10}
           renderItem={({ item, index }) => {
             const safeImage = item.image || item.image_url;
             return (
-              <Animated.View entering={FadeInDown.duration(350).delay(index * 50)} style={styles.cardWrapper}>
+              <View style={styles.cardWrapper}>
                 <View style={styles.card}>
                   <TouchableOpacity
                     activeOpacity={0.9}
@@ -128,7 +134,7 @@ export default function WishlistScreen() {
                     </View>
                   </View>
                 </View>
-              </Animated.View>
+              </View>
             );
           }}
         />

@@ -6,7 +6,6 @@ import { Session } from "@supabase/supabase-js";
 import { CartProvider } from "@/lib/CartContext";
 import { WishlistProvider } from "@/lib/WishlistContext";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-
 import { LogBox } from "react-native";
 
 LogBox.ignoreLogs([

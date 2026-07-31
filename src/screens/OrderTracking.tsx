@@ -11,6 +11,7 @@ import {
   Linking,
   Alert,
   Animated,
+  Image,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -40,11 +41,12 @@ const calculateHaversineKm = (lat1: number, lon1: number, lat2: number, lon2: nu
 
 export default function OrderTrackingScreen() {
   const router = useRouter();
-  const { id: queryId, orderId, initialStatus } = useLocalSearchParams<{ id?: string, orderId?: string, initialStatus?: string }>();
+  const { id: queryId, orderId, initialStatus, orderData } = useLocalSearchParams<{ id?: string, orderId?: string, initialStatus?: string, orderData?: string }>();
   const activeId = orderId || queryId;
 
-  const [order, setOrder] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
+  const initialOrder = orderData ? JSON.parse(orderData) : null;
+  const [order, setOrder] = useState<any>(initialOrder);
+  const [loading, setLoading] = useState(!initialOrder);
   const [driverLocation, setDriverLocation] = useState<{latitude: number, longitude: number, heading: number} | null>(null);
   const [userLocation, setUserLocation] = useState<{latitude: number, longitude: number} | null>(null);
   const [distanceKm, setDistanceKm] = useState<number>(0);
@@ -117,8 +119,11 @@ export default function OrderTrackingScreen() {
         (payload) => {
           const newOrder = payload.new as any;
           const normalizedNumber = '#' + activeId.replace(/^#+/, '');
-          if (newOrder.id === activeId || newOrder.order_number === activeId || newOrder.order_number === normalizedNumber) {
-            setOrder((prev: any) => ({ ...prev, ...newOrder }));
+          
+          if (newOrder && (newOrder.id === activeId || newOrder.order_number === activeId || newOrder.order_number === normalizedNumber)) {
+            if (newOrder.status) {
+              setOrder((prev: any) => ({ ...prev, ...newOrder }));
+            }
             if (newOrder.driver_latitude && newOrder.driver_longitude) {
               setDriverLocation({
                 latitude: Number(newOrder.driver_latitude),
@@ -181,6 +186,28 @@ export default function OrderTrackingScreen() {
 
   const liveDriver = driverLocation || { ...GAROWE_SCOOTER, heading: 45 };
 
+  // Safely parse JSON items (MUST BE ABOVE EARLY RETURNS TO OBEY RULES OF HOOKS)
+  const parsedItems = React.useMemo(() => {
+    const itemsData = order?.rawItems || order?.items;
+    if (!itemsData) return [];
+    
+    if (typeof itemsData === 'string') {
+      try {
+        // Try to parse if it's a raw JSON string from Supabase Realtime
+        return JSON.parse(itemsData);
+      } catch (e) {
+        // If it fails (Unexpected character 'x'), it means it's a flattened summary string like "1x pizza"
+        // In this case, we just return it as a generic single item so the receipt doesn't crash.
+        return [{ 
+          name: itemsData, 
+          quantity: 1, 
+          price: typeof order?.total_price === 'number' ? order.total_price : parseFloat((order?.total || "0").replace('$', '')) || 0 
+        }];
+      }
+    }
+    return Array.isArray(itemsData) ? itemsData : [];
+  }, [order]);
+
   useEffect(() => {
     if (order) {
       const km = calculateHaversineKm(liveDriver.latitude, liveDriver.longitude, destLat, destLng);
@@ -202,36 +229,74 @@ export default function OrderTrackingScreen() {
     }
   }, [driverLocation, order]);
 
+  // 🚨 IF DATA IS MISSING AND STILL LOADING:
+  if (loading && !order) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: '#F9FAFB', justifyContent: 'center', alignItems: 'center' }} edges={['top']}>
+        <View style={styles.header}>
+          <TouchableOpacity style={styles.backBtn} onPress={() => {
+            if (router.canGoBack()) router.back();
+            else router.replace('/(tabs)/orders');
+          }}>
+            <Ionicons name="arrow-back" size={24} color="#1A1A1A" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Loading Order...</Text>
+          <View style={styles.headerRightPlaceholder} />
+        </View>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <Text style={{ color: '#6B7280', fontSize: 16 }}>Fetching order details...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   // 🚨 IF ORDER IS CANCELLED / REJECTED:
   if (order?.status?.toLowerCase() === 'cancelled' || order?.status?.toLowerCase() === 'rejected') {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: '#F9FAFB' }} edges={['top']}>
         <View style={styles.header}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.replace('/(tabs)/orders')}>
+          <TouchableOpacity style={styles.backBtn} onPress={() => {
+            if (router.canGoBack()) router.back();
+            else router.replace('/(tabs)/orders');
+          }}>
             <Ionicons name="arrow-back" size={24} color="#1A1A1A" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Order Details</Text>
+          <Text style={styles.headerTitle}>Order Cancelled</Text>
           <View style={styles.headerRightPlaceholder} />
         </View>
         <ScrollView contentContainerStyle={{ padding: 20, gap: 16 }}>
-          {/* Red Cancelled Banner */}
-          <View style={{ backgroundColor: '#FFFFFF', borderRadius: 16, padding: 20, alignItems: 'center' }}>
-            <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: '#FEE2E2', justifyContent: 'center', alignItems: 'center', marginBottom: 12 }}>
-              <Ionicons color="#EF4444" name="close-circle" size={40}/>
+          <View style={{ backgroundColor: '#FFFFFF', borderRadius: 16, padding: 24, alignItems: 'center', shadowColor: '#000', shadowOffset: {width: 0, height: 2}, shadowOpacity: 0.05, shadowRadius: 8, elevation: 2 }}>
+            <View style={{ width: 72, height: 72, borderRadius: 36, backgroundColor: '#FEF2F2', justifyContent: 'center', alignItems: 'center', marginBottom: 16 }}>
+              <Ionicons color="#DC2626" name="close-circle" size={48}/>
             </View>
 
-            <Text style={{ fontSize: 22, fontWeight: 'bold', color: '#111827', marginBottom: 8 }}>Order Cancelled</Text>
+            <Text style={{ fontSize: 24, fontWeight: '800', color: '#111827', marginBottom: 8 }}>Order Cancelled</Text>
+            <Text style={{ fontSize: 15, color: '#6B7280', textAlign: 'center', marginBottom: 20 }}>
+              Your order {displayOrderId} from {order?.restaurant_name || order?.restaurant || 'the restaurant'} has been cancelled.
+            </Text>
 
-            {/* Rejection Reason Container */}
-            <View style={{ width: '100%', backgroundColor: '#FEF2F2', borderLeftWidth: 4, borderLeftColor: '#DC2626', borderRadius: 8, padding: 12, marginVertical: 10 }}>
-              <Text style={{ fontSize: 12, fontWeight: '700', color: '#991B1B', textTransform: 'uppercase', marginBottom: 4 }}>Reason:</Text>
-              <Text style={{ fontSize: 14, color: '#DC2626', lineHeight: 20 }}>
-                {order?.rejection_reason || 'Order was cancelled by restaurant.'}
+            <View style={{ width: '100%', backgroundColor: '#FEF2F2', borderWidth: 1, borderColor: '#FCA5A5', borderRadius: 12, padding: 16, marginBottom: 24 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                <Ionicons name="information-circle" size={20} color="#DC2626" style={{ marginRight: 8 }} />
+                <Text style={{ fontSize: 14, fontWeight: '800', color: '#991B1B', textTransform: 'uppercase' }}>Cancellation Reason</Text>
+              </View>
+              <Text style={{ fontSize: 15, color: '#DC2626', lineHeight: 22 }}>
+                {order?.rejection_reason || 'Order was cancelled by the restaurant or admin.'}
               </Text>
             </View>
 
-            <TouchableOpacity style={{ width: '100%', backgroundColor: '#EF4444', paddingVertical: 14, borderRadius: 12, alignItems: 'center', marginTop: 8 }} onPress={() => router.replace('/(tabs)')}>
-              <Text style={{ color: '#FFFFFF', fontWeight: 'bold', fontSize: 15 }}>Back to Home</Text>
+            <TouchableOpacity 
+              style={{ width: '100%', backgroundColor: '#111827', paddingVertical: 16, borderRadius: 12, alignItems: 'center' }} 
+              onPress={() => router.replace('/(tabs)/orders')}
+            >
+              <Text style={{ color: '#FFFFFF', fontWeight: 'bold', fontSize: 16 }}>Back to Orders</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={{ width: '100%', paddingVertical: 16, alignItems: 'center', marginTop: 8 }} 
+              onPress={() => router.replace('/(tabs)')}
+            >
+              <Text style={{ color: '#4B5563', fontWeight: 'bold', fontSize: 15 }}>Browse Restaurants</Text>
             </TouchableOpacity>
           </View>
         </ScrollView>
@@ -248,30 +313,92 @@ export default function OrderTrackingScreen() {
   displayOrderId = displayOrderId.replace(/^#+/, '#'); // Fixes ##PG123456 issue
 
   // 🚨 IF ORDER IS DELIVERED:
-  if (order?.status?.toLowerCase() === 'delivered') {
+  if (order?.status?.toLowerCase() === 'delivered' || order?.status?.toLowerCase() === 'completed') {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: '#F9FAFB' }} edges={['top']}>
         <View style={styles.header}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.replace('/(tabs)/orders')}>
+          <TouchableOpacity style={styles.backBtn} onPress={() => {
+            if (router.canGoBack()) router.back();
+            else router.replace('/(tabs)/orders');
+          }}>
             <Ionicons name="arrow-back" size={24} color="#1A1A1A" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Order Completed</Text>
+          <Text style={styles.headerTitle}>Order E-Receipt</Text>
           <View style={styles.headerRightPlaceholder} />
         </View>
-        <ScrollView contentContainerStyle={{ padding: 20, gap: 16 }}>
-          {/* Celebration Green Banner */}
-          <View style={{ backgroundColor: '#FFFFFF', borderRadius: 16, padding: 20, alignItems: 'center' }}>
-            <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: '#D1FAE5', justifyContent: 'center', alignItems: 'center', marginBottom: 12 }}>
-              <Ionicons name="checkmark-circle" size={44} color="#10B981" />
+        
+        <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
+          {/* Header Banner */}
+          <View style={{ alignItems: 'center', marginBottom: 24 }}>
+            <View style={{ width: 80, height: 80, borderRadius: 40, backgroundColor: '#D1FAE5', justifyContent: 'center', alignItems: 'center', marginBottom: 16 }}>
+              <Ionicons name="checkmark-done" size={44} color="#10B981" />
+            </View>
+            <Text style={{ fontSize: 26, fontWeight: '900', color: '#064E3B', marginBottom: 8 }}>Order Delivered!</Text>
+            <Text style={{ fontSize: 15, color: '#6B7280', textAlign: 'center' }}>
+              Your food from {order?.restaurant_name || order?.restaurant || 'PuntEats'} was delivered successfully.
+            </Text>
+          </View>
+
+          {/* Receipt Card */}
+          <View style={{ backgroundColor: '#FFFFFF', borderRadius: 20, padding: 24, shadowColor: '#000', shadowOffset: {width: 0, height: 4}, shadowOpacity: 0.05, shadowRadius: 12, elevation: 3, marginBottom: 24 }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: '#F3F4F6', borderStyle: 'dashed' }}>
+              <View>
+                <Text style={{ fontSize: 13, color: '#9CA3AF', marginBottom: 4 }}>Order Number</Text>
+                <Text style={{ fontSize: 16, fontWeight: '800', color: '#111827' }}>{displayOrderId}</Text>
+              </View>
+              <View style={{ alignItems: 'flex-end' }}>
+                <Text style={{ fontSize: 13, color: '#9CA3AF', marginBottom: 4 }}>Date</Text>
+                <Text style={{ fontSize: 15, fontWeight: '600', color: '#4B5563' }}>{orderTimeStr}</Text>
+              </View>
             </View>
 
-            <Text style={{ fontSize: 20, fontWeight: 'bold', color: '#065F46', marginBottom: 6 }}>🎉 Order Delivered Successfully!</Text>
-            <Text style={{ fontSize: 14, color: '#4B5563', textAlign: 'center', marginBottom: 16 }}>Enjoy your meal! Thank you for ordering with PuntGo.</Text>
+            <Text style={{ fontSize: 13, color: '#9CA3AF', marginBottom: 12 }}>Items Delivered</Text>
+            
+            <View style={{ marginBottom: 20 }}>
+              {parsedItems.length > 0 ? (
+                parsedItems.map((item: any, idx: number) => (
+                  <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
+                    {item.image ? (
+                      <Image source={{ uri: item.image }} style={{ width: 50, height: 50, borderRadius: 8, backgroundColor: '#F3F4F6' }} />
+                    ) : (
+                      <View style={{ width: 50, height: 50, borderRadius: 8, backgroundColor: '#F3F4F6', justifyContent: 'center', alignItems: 'center' }}>
+                        <Ionicons name="fast-food" size={24} color="#9CA3AF" />
+                      </View>
+                    )}
+                    <View style={{ flex: 1, marginLeft: 12 }}>
+                      <Text style={{ fontSize: 15, fontWeight: '700', color: '#111827', textTransform: 'capitalize' }} numberOfLines={1}>
+                        {item.name}
+                      </Text>
+                      <Text style={{ fontSize: 13, color: '#6B7280', marginTop: 2 }}>
+                        Qty: {item.quantity || 1}
+                      </Text>
+                    </View>
+                    <Text style={{ fontSize: 15, fontWeight: '800', color: '#111827' }}>
+                      ${((item.price || 0) * (item.quantity || 1)).toFixed(2)}
+                    </Text>
+                  </View>
+                ))
+              ) : (
+                <Text style={{ fontSize: 15, color: '#6B7280', fontStyle: 'italic' }}>
+                  No item details available.
+                </Text>
+              )}
+            </View>
 
-            <TouchableOpacity style={{ width: '100%', backgroundColor: '#10B981', paddingVertical: 14, borderRadius: 12, alignItems: 'center' }} onPress={() => router.replace('/(tabs)')}>
-              <Text style={{ color: '#FFFFFF', fontWeight: 'bold', fontSize: 15 }}>Rate Experience & Back Home</Text>
-            </TouchableOpacity>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: 16, borderTopWidth: 1, borderTopColor: '#F3F4F6' }}>
+              <Text style={{ fontSize: 16, fontWeight: '700', color: '#4B5563' }}>Total Paid</Text>
+              <Text style={{ fontSize: 22, fontWeight: '900', color: '#10B981' }}>
+                {typeof order?.total_price === 'number' ? `$${order.total_price.toFixed(2)}` : (order?.total || `$${order?.total_price || '0.00'}`)}
+              </Text>
+            </View>
           </View>
+
+          <TouchableOpacity 
+            style={{ width: '100%', backgroundColor: '#1B7D3C', paddingVertical: 16, borderRadius: 16, alignItems: 'center', shadowColor: '#1B7D3C', shadowOffset: {width:0, height:4}, shadowOpacity: 0.2, shadowRadius: 8, elevation: 4 }} 
+            onPress={() => router.replace('/(tabs)/orders')}
+          >
+            <Text style={{ color: '#FFFFFF', fontWeight: '800', fontSize: 16 }}>Close Receipt</Text>
+          </TouchableOpacity>
         </ScrollView>
       </SafeAreaView>
     );
