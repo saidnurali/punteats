@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from "react";
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Platform } from "react-native";
 import { Product, mapFoodItemToProduct } from "@/lib/products";
@@ -91,9 +91,9 @@ export const WishlistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     saveWishlist();
   }, [wishlistItems, isLoaded]);
 
-  const isWishlisted = (id: string) => wishlistItems.some((item) => item.id === id);
+  const isWishlisted = useCallback((id: string) => wishlistItems.some((item) => item.id === id), [wishlistItems]);
 
-  const toggleWishlist = async (product: Product) => {
+  const toggleWishlist = useCallback(async (product: Product) => {
     // Optimistic Update
     setWishlistItems((prev) => {
       const exists = prev.some((item) => item.id === product.id);
@@ -120,12 +120,14 @@ export const WishlistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     } catch (err) {
       console.warn("Wishlist sync error:", err);
     }
-  };
+  }, [wishlistItems]);
 
-  const clearWishlist = () => setWishlistItems([]);
+  const clearWishlist = useCallback(() => setWishlistItems([]), []);
+
+  const value = useMemo(() => ({ wishlistItems, isWishlisted, toggleWishlist, clearWishlist }), [wishlistItems, isWishlisted, toggleWishlist, clearWishlist]);
 
   return (
-    <WishlistContext.Provider value={{ wishlistItems, isWishlisted, toggleWishlist, clearWishlist }}>
+    <WishlistContext.Provider value={value}>
       {children}
     </WishlistContext.Provider>
   );

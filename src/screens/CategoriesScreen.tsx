@@ -332,6 +332,7 @@ export default function CategoriesScreen() {
                   source={{ uri: safeImage }}
                   style={styles.dishThumb}
                   contentFit="cover" cachePolicy="memory-disk" transition={200}
+                  recyclingKey={item.id}
                 />
 
                 <View style={styles.dishCardContent}>

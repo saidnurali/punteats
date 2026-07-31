@@ -19,6 +19,10 @@ Sentry.init({
   tracesSampleRate: 1.0,
 });
 
+import * as SplashScreen from 'expo-splash-screen';
+
+SplashScreen.preventAutoHideAsync();
+
 function RootLayout() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [initialized, setInitialized] = useState(false);
@@ -35,6 +39,10 @@ function RootLayout() {
         setIsAuthenticated(false);
       }
       setInitialized(true);
+      // Wait for layout to settle before hiding splash screen
+      setTimeout(() => {
+        SplashScreen.hideAsync();
+      }, 50);
     };
 
     checkAuth();

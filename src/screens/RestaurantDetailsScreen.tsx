@@ -28,6 +28,90 @@ const { width } = Dimensions.get("window");
 
 const DEFAULT_COVER = "https://images.unsplash.com/photo-1544025162-d76694265947?w=800&auto=format&fit=crop&q=80";
 
+interface MenuDishCardProps {
+  item: any;
+  /** Stable number primitive — the key prop for memo bailout */
+  cartQuantity: number;
+  addToCart: (item: any, qty: number) => void;
+  updateQuantity: (id: string, delta: number) => void;
+  removeFromCart: (id: string) => void;
+}
+
+const MenuDishCard = React.memo(({
+  item, cartQuantity, addToCart, updateQuantity, removeFromCart
+}: MenuDishCardProps) => {
+  const router = useRouter();
+  return (
+    <TouchableOpacity
+      style={styles.dishGridCard}
+      activeOpacity={0.7}
+      onPress={() => router.push(`/product/${item.id}`)}
+    >
+      <Image
+        source={{ uri: item.image }}
+        style={styles.dishGridImg}
+        contentFit="cover" cachePolicy="memory-disk" transition={200}
+        recyclingKey={item.id}
+      />
+      <View style={styles.dishGridRatingBadge}>
+        <Ionicons name="star" size={10} color="#F5A623" />
+        <Text style={styles.dishGridRatingText}>{item.rating || "4.8"}</Text>
+      </View>
+      <View style={styles.dishGridInfo}>
+        <View style={{ minHeight: 40, justifyContent: 'flex-start' }}>
+          <Text style={styles.dishGridName} numberOfLines={2}>
+            {item.name}
+          </Text>
+        </View>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+          <Text style={styles.dishGridPrice}>{item.priceFormatted}</Text>
+          {cartQuantity > 0 ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#F0FDF4', borderRadius: 20, paddingHorizontal: 6, paddingVertical: 4 }}>
+              <TouchableOpacity 
+                onPress={(e) => { e.stopPropagation(); cartQuantity > 1 ? updateQuantity(item.id, -1) : removeFromCart(item.id); }}
+                style={{ width: 26, height: 26, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF', borderRadius: 13, shadowColor: '#000', shadowOffset: {width:0, height:1}, shadowOpacity: 0.1, shadowRadius: 2, elevation: 1 }}
+              >
+                <Ionicons name="remove" size={16} color="#1B7D3C" />
+              </TouchableOpacity>
+              <Text style={{ marginHorizontal: 10, fontSize: 14, fontWeight: '700', color: '#1B7D3C' }}>{cartQuantity}</Text>
+              <TouchableOpacity 
+                onPress={(e) => { e.stopPropagation(); updateQuantity(item.id, 1); }}
+                style={{ width: 26, height: 26, alignItems: 'center', justifyContent: 'center', backgroundColor: '#1B7D3C', borderRadius: 13 }}
+              >
+                <Ionicons name="add" size={16} color="#FFFFFF" />
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <TouchableOpacity
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: 16,
+                backgroundColor: "#1B7D3C",
+                justifyContent: "center",
+                alignItems: "center",
+              }}
+              activeOpacity={0.7}
+              onPress={(e) => {
+                e.stopPropagation();
+                addToCart(item, 1);
+              }}
+            >
+              <Ionicons name="add" size={20} color="#FFFFFF" />
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
+    </TouchableOpacity>
+  );
+},
+// Custom comparator: re-render only when this card's own data changes.
+(prev, next) =>
+  prev.item === next.item &&
+  prev.cartQuantity === next.cartQuantity
+);
+
+
 export default function RestaurantDetailsScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
@@ -383,75 +467,19 @@ export default function RestaurantDetailsScreen() {
             )}
           </>
         }
-        renderItem={({ item }) => (
-          <TouchableOpacity
-            style={styles.dishGridCard}
-            activeOpacity={0.7}
-            onPress={() => router.push(`/product/${item.id}`)}
-          >
-            <Image
-              source={{ uri: item.image }}
-              style={styles.dishGridImg}
-              contentFit="cover" cachePolicy="memory-disk" transition={200}
-              recyclingKey={item.id}
+        extraData={cartItems}
+        renderItem={({ item }) => {
+          const cartQuantity = cartItems.find(c => c.id === item.id)?.quantity ?? 0;
+          return (
+            <MenuDishCard
+              item={item}
+              cartQuantity={cartQuantity}
+              addToCart={addToCart}
+              updateQuantity={updateQuantity}
+              removeFromCart={removeFromCart}
             />
-            <View style={styles.dishGridRatingBadge}>
-              <Ionicons name="star" size={10} color="#F5A623" />
-              <Text style={styles.dishGridRatingText}>{item.rating || "4.8"}</Text>
-            </View>
-            <View style={styles.dishGridInfo}>
-              <View style={{ minHeight: 40, justifyContent: 'flex-start' }}>
-                <Text style={styles.dishGridName} numberOfLines={2}>
-                  {item.name}
-                </Text>
-              </View>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
-                <Text style={styles.dishGridPrice}>{item.priceFormatted}</Text>
-                {(() => {
-                  const cartItem = cartItems.find(c => c.id === item.id);
-                  if (cartItem) {
-                    return (
-                      <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#F0FDF4', borderRadius: 20, paddingHorizontal: 6, paddingVertical: 4 }}>
-                        <TouchableOpacity 
-                          onPress={(e) => { e.stopPropagation(); cartItem.quantity > 1 ? updateQuantity(item.id, -1) : removeFromCart(item.id); }}
-                          style={{ width: 26, height: 26, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF', borderRadius: 13, shadowColor: '#000', shadowOffset: {width:0, height:1}, shadowOpacity: 0.1, shadowRadius: 2, elevation: 1 }}
-                        >
-                          <Ionicons name="remove" size={16} color="#1B7D3C" />
-                        </TouchableOpacity>
-                        <Text style={{ marginHorizontal: 10, fontSize: 14, fontWeight: '700', color: '#1B7D3C' }}>{cartItem.quantity}</Text>
-                        <TouchableOpacity 
-                          onPress={(e) => { e.stopPropagation(); updateQuantity(item.id, 1); }}
-                          style={{ width: 26, height: 26, alignItems: 'center', justifyContent: 'center', backgroundColor: '#1B7D3C', borderRadius: 13 }}
-                        >
-                          <Ionicons name="add" size={16} color="#FFFFFF" />
-                        </TouchableOpacity>
-                      </View>
-                    );
-                  }
-                  return (
-                    <TouchableOpacity
-                      style={{
-                        width: 32,
-                        height: 32,
-                        borderRadius: 16,
-                        backgroundColor: "#1B7D3C",
-                        justifyContent: "center",
-                        alignItems: "center",
-                      }}
-                      activeOpacity={0.7}
-                      onPress={(e) => {
-                        e.stopPropagation();
-                        addToCart(item, 1);
-                      }}
-                    >
-                      <Ionicons name="add" size={20} color="#FFFFFF" />
-                    </TouchableOpacity>
-                  );
-                })()}
-              </View>
-            </View>
-          </TouchableOpacity>
-        )}
+          );
+        }}
         ListEmptyComponent={
           activeTab === "Menu" ? (
             loading && foodItems.length === 0 ? (

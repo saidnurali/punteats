@@ -214,6 +214,92 @@ const FilterModal = ({ visible, onClose, sortBy, setSortBy, priceRange, setPrice
   );
 }
 
+interface HomeDishCardProps {
+  item: any;
+  fav: boolean;
+  /** Pass the quantity as a stable primitive so memo can diff it */
+  cartQuantity: number;
+  toggleWishlist: (item: any) => void;
+  addToCart: (item: any, qty: number) => void;
+  updateQuantity: (id: string, delta: number) => void;
+  removeFromCart: (id: string) => void;
+}
+
+const HomeDishCard = React.memo((
+  { item, fav, cartQuantity, toggleWishlist, addToCart, updateQuantity, removeFromCart }: HomeDishCardProps
+) => {
+  const router = useRouter();
+  const safeImage = item?.images?.[0] || item?.image_url || item?.image;
+  return (
+    <View style={{ width: "48%" }}>
+      <TouchableOpacity
+        style={[styles.foodCardItem, { width: "100%", marginBottom: 0 }]}
+        activeOpacity={0.7}
+        onPress={() => router.push(`/product/${item.id}`)}
+      >
+        <View style={styles.foodImgWrap}>
+          <Image source={{ uri: safeImage }} style={styles.foodImg} contentFit="cover" cachePolicy="memory-disk" transition={200} recyclingKey={item.id} />
+          <View style={styles.foodRatingBadge}>
+            <Ionicons name="star" size={12} color="#F5A623" />
+            <Text style={styles.foodRatingText}>{item.rating}</Text>
+          </View>
+          <TouchableOpacity
+            style={styles.foodHeartBtn}
+            activeOpacity={0.7}
+            onPress={() => toggleWishlist(item)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons
+              name={fav ? "heart" : "heart-outline"}
+              size={16}
+              color={fav ? "#EF4444" : "#FFFFFF"}
+            />
+          </TouchableOpacity>
+        </View>
+        <Text style={styles.foodItemTitle} numberOfLines={1}>
+          {item.name}
+        </Text>
+        <View style={styles.foodItemFooter}>
+          <Text style={styles.foodItemPrice}>{item.priceFormatted}</Text>
+          {cartQuantity > 0 ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#F0FDF4', borderRadius: 20, paddingHorizontal: 6, paddingVertical: 4 }}>
+              <TouchableOpacity 
+                onPress={() => cartQuantity > 1 ? updateQuantity(item.id, -1) : removeFromCart(item.id)}
+                style={{ width: 24, height: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF', borderRadius: 12, shadowColor: '#000', shadowOffset: {width:0, height:1}, shadowOpacity: 0.1, shadowRadius: 2, elevation: 1 }}
+              >
+                <Ionicons name="remove" size={14} color="#1B7D3C" />
+              </TouchableOpacity>
+              <Text style={{ marginHorizontal: 8, fontSize: 13, fontWeight: '700', color: '#1B7D3C' }}>{cartQuantity}</Text>
+              <TouchableOpacity 
+                onPress={() => updateQuantity(item.id, 1)}
+                style={{ width: 24, height: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: '#1B7D3C', borderRadius: 12 }}
+              >
+                <Ionicons name="add" size={14} color="#FFFFFF" />
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <TouchableOpacity
+              style={styles.foodAddBtn}
+              activeOpacity={0.7}
+              onPress={() => addToCart(item, 1)}
+            >
+              <Ionicons name="add" size={18} color="#1B7D3C" />
+            </TouchableOpacity>
+          )}
+        </View>
+      </TouchableOpacity>
+    </View>
+  );
+},
+// Custom comparator: only re-render when the card's own data changes.
+// This is the key to O(1) re-renders when a single cart item changes.
+(prev, next) =>
+  prev.item === next.item &&
+  prev.fav === next.fav &&
+  prev.cartQuantity === next.cartQuantity
+);
+
+
 export default function HomeScreen() {
   const router = useRouter();
   const { addToCart, cartItems, updateQuantity, removeFromCart } = useCart();
@@ -301,27 +387,31 @@ export default function HomeScreen() {
     });
   }, [allDishes]);
 
-  let filteredFoods = (selectedCategoryId === 'ALL' || selectedCategoryId === '0' || selectedCategoryName.toLowerCase() === 'all')
-    ? allDishes 
-    : allDishes.filter(dish => 
-        dish.category_id === selectedCategoryId ||
-        (dish.category && dish.category.toLowerCase().includes(selectedCategoryName.toLowerCase())) ||
-        (dish.name && dish.name.toLowerCase().includes(selectedCategoryName.toLowerCase()))
-      );
+  const filteredFoods = useMemo(() => {
+    let foods = (selectedCategoryId === 'ALL' || selectedCategoryId === '0' || selectedCategoryName.toLowerCase() === 'all')
+      ? allDishes 
+      : allDishes.filter(dish => 
+          dish.category_id === selectedCategoryId ||
+          (dish.category && dish.category.toLowerCase().includes(selectedCategoryName.toLowerCase())) ||
+          (dish.name && dish.name.toLowerCase().includes(selectedCategoryName.toLowerCase()))
+        );
 
-  if (priceRange === '$') {
-     filteredFoods = filteredFoods.filter(item => item.price < 5);
-  } else if (priceRange === '$$') {
-     filteredFoods = filteredFoods.filter(item => item.price >= 5 && item.price <= 15);
-  } else if (priceRange === '$$$') {
-     filteredFoods = filteredFoods.filter(item => item.price > 15);
-  }
+    if (priceRange === '$') {
+       foods = foods.filter(item => item.price < 5);
+    } else if (priceRange === '$$') {
+       foods = foods.filter(item => item.price >= 5 && item.price <= 15);
+    } else if (priceRange === '$$$') {
+       foods = foods.filter(item => item.price > 15);
+    }
 
-  if (sortBy === 'Rating') {
-     filteredFoods.sort((a, b) => parseFloat(b.rating || '0') - parseFloat(a.rating || '0'));
-  } else if (sortBy === 'Delivery Time') {
-     filteredFoods.sort((a, b) => parseInt(a.deliveryTime || '0') - parseInt(b.deliveryTime || '0'));
-  }
+    if (sortBy === 'Rating') {
+       foods.sort((a, b) => parseFloat(b.rating || '0') - parseFloat(a.rating || '0'));
+    } else if (sortBy === 'Delivery Time') {
+       foods.sort((a, b) => parseInt(a.deliveryTime || '0') - parseInt(b.deliveryTime || '0'));
+    }
+
+    return foods;
+  }, [allDishes, selectedCategoryId, selectedCategoryName, priceRange, sortBy]);
 
   const activeCategories = categoriesList;
 
@@ -513,7 +603,8 @@ export default function HomeScreen() {
         }
         ListHeaderComponent={<View>{renderHeader()}</View>}
         ListFooterComponent={<View>{renderFooter()}</View>}
-        renderItem={({ item, index }) => {
+        extraData={cartItems}
+        renderItem={({ item }) => {
           if (isLoading && allDishes.length === 0) {
             return (
               <View style={{ width: "48%" }}>
@@ -522,72 +613,17 @@ export default function HomeScreen() {
             );
           }
           const fav = isWishlisted(item.id);
-          const safeImage = item?.images?.[0] || item?.image_url || item?.image;
+          const cartQuantity = cartItems.find(c => c.id === item.id)?.quantity ?? 0;
           return (
-            <View style={{ width: "48%" }}>
-              <TouchableOpacity
-                style={[styles.foodCardItem, { width: "100%", marginBottom: 0 }]}
-                activeOpacity={0.7}
-                onPress={() => router.push(`/product/${item.id}`)}
-              >
-                <View style={styles.foodImgWrap}>
-                  <Image source={{ uri: safeImage }} style={styles.foodImg} contentFit="cover" cachePolicy="memory-disk" transition={200} recyclingKey={item.id} />
-                  <View style={styles.foodRatingBadge}>
-                    <Ionicons name="star" size={12} color="#F5A623" />
-                    <Text style={styles.foodRatingText}>{item.rating}</Text>
-                  </View>
-                  <TouchableOpacity
-                    style={styles.foodHeartBtn}
-                    activeOpacity={0.7}
-                    onPress={() => toggleWishlist(item)}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <Ionicons
-                      name={fav ? "heart" : "heart-outline"}
-                      size={16}
-                      color={fav ? "#EF4444" : "#FFFFFF"}
-                    />
-                  </TouchableOpacity>
-                </View>
-                <Text style={styles.foodItemTitle} numberOfLines={1}>
-                  {item.name}
-                </Text>
-                <View style={styles.foodItemFooter}>
-                  <Text style={styles.foodItemPrice}>{item.priceFormatted}</Text>
-                  {(() => {
-                    const cartItem = cartItems.find(c => c.id === item.id);
-                    if (cartItem) {
-                      return (
-                        <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#F0FDF4', borderRadius: 20, paddingHorizontal: 6, paddingVertical: 4 }}>
-                          <TouchableOpacity 
-                            onPress={() => cartItem.quantity > 1 ? updateQuantity(item.id, -1) : removeFromCart(item.id)}
-                            style={{ width: 24, height: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF', borderRadius: 12, shadowColor: '#000', shadowOffset: {width:0, height:1}, shadowOpacity: 0.1, shadowRadius: 2, elevation: 1 }}
-                          >
-                            <Ionicons name="remove" size={14} color="#1B7D3C" />
-                          </TouchableOpacity>
-                          <Text style={{ marginHorizontal: 8, fontSize: 13, fontWeight: '700', color: '#1B7D3C' }}>{cartItem.quantity}</Text>
-                          <TouchableOpacity 
-                            onPress={() => updateQuantity(item.id, 1)}
-                            style={{ width: 24, height: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: '#1B7D3C', borderRadius: 12 }}
-                          >
-                            <Ionicons name="add" size={14} color="#FFFFFF" />
-                          </TouchableOpacity>
-                        </View>
-                      );
-                    }
-                    return (
-                      <TouchableOpacity
-                        style={styles.foodAddBtn}
-                        activeOpacity={0.7}
-                        onPress={() => addToCart(item, 1)}
-                      >
-                        <Ionicons name="add" size={18} color="#1B7D3C" />
-                      </TouchableOpacity>
-                    );
-                  })()}
-                </View>
-              </TouchableOpacity>
-            </View>
+            <HomeDishCard
+              item={item}
+              fav={fav}
+              cartQuantity={cartQuantity}
+              toggleWishlist={toggleWishlist}
+              addToCart={addToCart}
+              updateQuantity={updateQuantity}
+              removeFromCart={removeFromCart}
+            />
           );
         }}
       />

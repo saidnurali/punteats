@@ -94,7 +94,7 @@ export default function WishlistScreen() {
                     activeOpacity={0.9}
                     onPress={() => router.push(`/product/${item.id}`)}
                   >
-                    <Image source={{ uri: safeImage }} style={styles.cardImage} contentFit="cover" cachePolicy="memory-disk" transition={200} />
+                    <Image source={{ uri: safeImage }} style={styles.cardImage} contentFit="cover" cachePolicy="memory-disk" transition={200} recyclingKey={item.id} />
                   </TouchableOpacity>
 
                   <TouchableOpacity
