@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import {
   View,
   Text,
@@ -34,8 +34,10 @@ export default function PaymentSelectionScreen() {
   const [dbOrderId, setDbOrderId] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const scaleAnim = useState(new Animated.Value(0.4))[0];
-  const opacityAnim = useState(new Animated.Value(0))[0];
+  // useRef prevents recreating Animated.Value on every render
+  // useState(new Animated.Value(0)) was calling `new Animated.Value` on EVERY render
+  const scaleAnim = useRef(new Animated.Value(0.4)).current;
+  const opacityAnim = useRef(new Animated.Value(0)).current;
 
   const handlePlaceOrder = async () => {
     if (isSubmitting) return;

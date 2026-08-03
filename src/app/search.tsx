@@ -49,23 +49,23 @@ export default function SearchScreen() {
 
   const loadDefaults = async () => {
     try {
-      const recent = await AsyncStorage.getItem('@recent_searches');
+      // Parallelize all 3 loads — was sequential (recent, restaurants, food in sequence)
+      const [recent, restsResult, popFoodResult] = await Promise.all([
+        AsyncStorage.getItem('@recent_searches'),
+        supabase
+          .from('restaurants')
+          .select('id, name, rating, cover_image, image_url')
+          .order('rating', { ascending: false })
+          .limit(3),
+        supabase
+          .from('food_items')
+          .select('id, name, description, price, image_url, category, restaurant_id, restaurant:restaurants(name)')
+          .limit(6),
+      ]);
+
       if (recent) setRecentSearches(JSON.parse(recent));
-
-      const { data: rests } = await supabase
-        .from('restaurants')
-        .select('*')
-        .order('rating', { ascending: false })
-        .limit(3);
-      if (rests) setSuggestedRestaurants(rests);
-
-      const { data: popFood } = await supabase
-        .from('food_items')
-        .select('*, restaurant:restaurants(name)')
-        .limit(6);
-      if (popFood) {
-        setPopularFood(popFood.map(mapFoodItemToProduct));
-      }
+      if (restsResult.data) setSuggestedRestaurants(restsResult.data);
+      if (popFoodResult.data) setPopularFood(popFoodResult.data.map(mapFoodItemToProduct));
     } catch (e) {}
   };
 

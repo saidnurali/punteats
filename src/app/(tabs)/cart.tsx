@@ -1,10 +1,10 @@
-import React from "react";
+import React, { useCallback, useMemo } from "react";
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
-  ScrollView,
+  FlatList,
   Platform,
   StatusBar,
   Alert,
@@ -14,7 +14,50 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { useCart } from "@/lib/CartContext";
-import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
+import Animated, { FadeIn } from "react-native-reanimated";
+
+/**
+ * Memoized cart row — only re-renders when its own item changes.
+ * Prevents the entire list from re-rendering when one quantity changes.
+ */
+const CartItemRow = React.memo(({ item, onRemove, onDecrement, onIncrement }: {
+  item: any;
+  onRemove: (id: string) => void;
+  onDecrement: (id: string) => void;
+  onIncrement: (id: string) => void;
+}) => (
+  <View style={styles.card}>
+    <Image
+      source={{ uri: item.image }}
+      style={styles.itemImage}
+      contentFit="cover" cachePolicy="memory-disk" transition={200}
+      recyclingKey={item.id}
+    />
+    <View style={styles.itemDetails}>
+      <Text style={styles.itemName} numberOfLines={1}>{item.name}</Text>
+      <View style={styles.priceStepperRow}>
+        <Text style={styles.itemPrice}>${item.price.toFixed(2)}</Text>
+        <View style={styles.stepperContainer}>
+          <TouchableOpacity
+            style={styles.stepperBtn}
+            activeOpacity={0.7}
+            onPress={() => item.quantity === 1 ? onRemove(item.id) : onDecrement(item.id)}
+          >
+            <Ionicons name={item.quantity === 1 ? "trash-outline" : "remove"} size={16} color={item.quantity === 1 ? "#6B6B6B" : "#4A4A4A"} />
+          </TouchableOpacity>
+          <Text style={styles.stepperCount}>{item.quantity}</Text>
+          <TouchableOpacity
+            style={styles.stepperBtn}
+            activeOpacity={0.7}
+            onPress={() => onIncrement(item.id)}
+          >
+            <Ionicons name="add" size={16} color="#4A4A4A" />
+          </TouchableOpacity>
+        </View>
+      </View>
+    </View>
+  </View>
+));
 
 export default function CartScreen() {
   const router = useRouter();
@@ -36,12 +79,56 @@ export default function CartScreen() {
     router.push("/checkout");
   };
 
+  // Stable handlers so CartItemRow's React.memo works
+  const handleRemove = useCallback((id: string) => removeFromCart(id), [removeFromCart]);
+  const handleDecrement = useCallback((id: string) => updateQuantity(id, -1), [updateQuantity]);
+  const handleIncrement = useCallback((id: string) => updateQuantity(id, 1), [updateQuantity]);
+
+  const renderCartItem = useCallback(({ item }: { item: any }) => (
+    <CartItemRow
+      item={item}
+      onRemove={handleRemove}
+      onDecrement={handleDecrement}
+      onIncrement={handleIncrement}
+    />
+  ), [handleRemove, handleDecrement, handleIncrement]);
+
+  // Stable extraData — avoids re-rendering all rows when only one quantity changes
+  const cartExtraKey = useMemo(() => cartItems.map(c => `${c.id}:${c.quantity}`).join(','), [cartItems]);
+
+  const CartFooter = useMemo(() => (
+    <>
+      <View style={styles.bottomBarBreakdown}>
+        <View style={styles.breakdownRow}>
+          <Text style={styles.breakdownLabel}>Subtotal</Text>
+          <Text style={styles.breakdownValue}>${totalPrice.toFixed(2)}</Text>
+        </View>
+        <View style={styles.breakdownRow}>
+          <Text style={styles.breakdownLabel}>Delivery Fee</Text>
+          <Text style={styles.breakdownValue}>$1.50</Text>
+        </View>
+        <View style={[styles.breakdownRow, { marginTop: 4 }]}>
+          <Text style={styles.breakdownTotalLabel}>Total</Text>
+          <Text style={styles.totalValue}>${(totalPrice + 1.5).toFixed(2)}</Text>
+        </View>
+      </View>
+      <TouchableOpacity
+        style={styles.proceedBtn}
+        activeOpacity={0.88}
+        onPress={handleProceedToPay}
+      >
+        <Text style={styles.proceedBtnText}>Checkout</Text>
+      </TouchableOpacity>
+      <View style={{ height: 40 }} />
+    </>
+  ), [totalPrice]);
+
   return (
     <Animated.View style={{ flex: 1 }} entering={FadeIn.duration(300)}>
       <SafeAreaView style={styles.container} edges={["top"]}>
         <StatusBar barStyle="dark-content" />
 
-      {/* HEADER BAR: Native Back Button + Centered Cart Icon & Title */}
+      {/* HEADER BAR */}
       <View style={styles.header}>
         <TouchableOpacity
           style={styles.backBtn}
@@ -85,97 +172,19 @@ export default function CartScreen() {
           </TouchableOpacity>
         </View>
       ) : (
-        <>
-          <ScrollView
-            style={styles.scrollView}
-            contentContainerStyle={styles.scrollContent}
-            showsVerticalScrollIndicator={false}
-          >
-            {cartItems.map((item, index) => (
-              <Animated.View key={`${item.id}-${index}`} style={styles.card} entering={FadeInDown.duration(400)}>
-                {/* Left: Food thumbnail */}
-                <Image
-                  source={{ uri: item.image }}
-                  style={styles.itemImage}
-                  contentFit="cover" cachePolicy="memory-disk" transition={200}
-                />
-
-                {/* Right/Middle Container */}
-                <View style={styles.itemDetails}>
-                  <Text style={styles.itemName} numberOfLines={1}>
-                    {item.name}
-                  </Text>
-
-                  <View style={styles.priceStepperRow}>
-                    <Text style={styles.itemPrice}>
-                      ${item.price.toFixed(2)}
-                    </Text>
-
-                    {/* Quantity Stepper */}
-                    <View style={styles.stepperContainer}>
-                      {item.quantity === 1 ? (
-                        <TouchableOpacity
-                          style={styles.stepperBtn}
-                          activeOpacity={0.7}
-                          onPress={() => removeFromCart(item.id)}
-                        >
-                          <Ionicons name="trash-outline" size={16} color="#6B6B6B" />
-                        </TouchableOpacity>
-                      ) : (
-                        <TouchableOpacity
-                          style={styles.stepperBtn}
-                          activeOpacity={0.7}
-                          onPress={() => updateQuantity(item.id, -1)}
-                        >
-                          <Ionicons name="remove" size={16} color="#4A4A4A" />
-                        </TouchableOpacity>
-                      )}
-
-                      <Text style={styles.stepperCount}>{item.quantity}</Text>
-
-                      <TouchableOpacity
-                        style={styles.stepperBtn}
-                        activeOpacity={0.7}
-                        onPress={() => updateQuantity(item.id, 1)}
-                      >
-                        <Ionicons name="add" size={16} color="#4A4A4A" />
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                </View>
-              </Animated.View>
-            ))}
-
-            {/* Extra spacing for bottom bar */}
-            <View style={{ height: 120 }} />
-          </ScrollView>
-
-          {/* DYNAMIC TOTAL & CHECKOUT BAR (BOTTOM FIXED) */}
-          <View style={styles.bottomBar}>
-            <View style={styles.bottomBarBreakdown}>
-              <View style={styles.breakdownRow}>
-                <Text style={styles.breakdownLabel}>Subtotal</Text>
-                <Text style={styles.breakdownValue}>${totalPrice.toFixed(2)}</Text>
-              </View>
-              <View style={styles.breakdownRow}>
-                <Text style={styles.breakdownLabel}>Delivery Fee</Text>
-                <Text style={styles.breakdownValue}>$1.50</Text>
-              </View>
-              <View style={[styles.breakdownRow, { marginTop: 4 }]}>
-                <Text style={styles.breakdownTotalLabel}>Total</Text>
-                <Text style={styles.totalValue}>${(totalPrice + 1.5).toFixed(2)}</Text>
-              </View>
-            </View>
-
-            <TouchableOpacity
-              style={styles.proceedBtn}
-              activeOpacity={0.88}
-              onPress={handleProceedToPay}
-            >
-              <Text style={styles.proceedBtnText}>Checkout</Text>
-            </TouchableOpacity>
-          </View>
-        </>
+        // FlatList instead of ScrollView+map — virtualizes cart items
+        // Removes cascading FadeInDown animations that ran 10 Reanimated worklets on mount
+        <FlatList
+          data={cartItems}
+          keyExtractor={(item, index) => `${item.id}-${index}`}
+          renderItem={renderCartItem}
+          extraData={cartExtraKey}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.scrollContent}
+          initialNumToRender={10}
+          windowSize={3}
+          ListFooterComponent={<View style={styles.bottomBar}>{CartFooter}</View>}
+        />
       )}
       </SafeAreaView>
     </Animated.View>

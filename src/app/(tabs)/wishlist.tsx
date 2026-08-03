@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef, useCallback, useEffect } from "react";
 import {
   View,
   Text,
@@ -25,10 +25,19 @@ export default function WishlistScreen() {
   const { addToCart } = useCart();
   const [toastMsg, setToastMsg] = useState("");
 
-  const showToast = (msg: string) => {
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    };
+  }, []);
+
+  const showToast = useCallback((msg: string) => {
     setToastMsg(msg);
-    setTimeout(() => setToastMsg(""), 2500);
-  };
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setToastMsg(""), 2500);
+  }, []);
 
   const validItems = wishlistItems.filter(item => item.price > 0 && (item.image || item.image_url));
 
@@ -61,6 +70,59 @@ export default function WishlistScreen() {
     );
   }
 
+  const renderWishlistItem = useCallback(({ item }: { item: any }) => {
+    const safeImage = item.image || item.image_url;
+    return (
+      <View style={styles.cardWrapper}>
+        <View style={styles.card}>
+          <TouchableOpacity
+            activeOpacity={0.9}
+            onPress={() => router.push(`/product/${item.id}`)}
+          >
+            <Image source={{ uri: safeImage }} style={styles.cardImage} contentFit="cover" cachePolicy="memory-disk" transition={200} recyclingKey={item.id} />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.heartBtn}
+            activeOpacity={0.8}
+            onPress={() => toggleWishlist(item)}
+          >
+            <Ionicons name="heart" size={18} color="#EF4444" />
+          </TouchableOpacity>
+
+          <View style={styles.cardBody}>
+            <TouchableOpacity
+              activeOpacity={0.9}
+              onPress={() => router.push(`/product/${item.id}`)}
+            >
+              <Text style={styles.cardName} numberOfLines={1}>{item.name}</Text>
+              <Text style={styles.cardCategory} numberOfLines={1}>{item.category}</Text>
+              
+              <View style={styles.metaRow}>
+                <Ionicons name="star" size={12} color="#F5A623" />
+                <Text style={styles.metaText}>{item.rating}</Text>
+              </View>
+            </TouchableOpacity>
+
+            <View style={styles.cardFooter}>
+              <Text style={styles.cardPrice}>${item.price.toFixed(2)}</Text>
+              <TouchableOpacity
+                style={styles.addBtn}
+                activeOpacity={0.85}
+                onPress={() => {
+                  addToCart(item, 1);
+                  showToast("Added to Cart!");
+                }}
+              >
+                <Ionicons name="add" size={18} color="#FFF" />
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </View>
+    );
+  }, [router, toggleWishlist, addToCart, showToast]);
+
   return (
     <Animated.View style={{ flex: 1, backgroundColor: "#F8F8F8" }} entering={FadeInDown.duration(400)}>
       <SafeAreaView style={styles.container} edges={["top"]}>
@@ -84,58 +146,7 @@ export default function WishlistScreen() {
           removeClippedSubviews={Platform.OS === 'android'}
           initialNumToRender={8}
           maxToRenderPerBatch={10}
-          renderItem={({ item, index }) => {
-            const safeImage = item.image || item.image_url;
-            return (
-              <View style={styles.cardWrapper}>
-                <View style={styles.card}>
-                  <TouchableOpacity
-                    activeOpacity={0.9}
-                    onPress={() => router.push(`/product/${item.id}`)}
-                  >
-                    <Image source={{ uri: safeImage }} style={styles.cardImage} contentFit="cover" cachePolicy="memory-disk" transition={200} recyclingKey={item.id} />
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.heartBtn}
-                    activeOpacity={0.8}
-                    onPress={() => toggleWishlist(item)}
-                  >
-                    <Ionicons name="heart" size={18} color="#EF4444" />
-                  </TouchableOpacity>
-
-                  <View style={styles.cardBody}>
-                    <TouchableOpacity
-                      activeOpacity={0.9}
-                      onPress={() => router.push(`/product/${item.id}`)}
-                    >
-                      <Text style={styles.cardName} numberOfLines={1}>{item.name}</Text>
-                      <Text style={styles.cardCategory} numberOfLines={1}>{item.category}</Text>
-                      
-                      <View style={styles.metaRow}>
-                        <Ionicons name="star" size={12} color="#F5A623" />
-                        <Text style={styles.metaText}>{item.rating}</Text>
-                      </View>
-                    </TouchableOpacity>
-
-                    <View style={styles.cardFooter}>
-                      <Text style={styles.cardPrice}>${item.price.toFixed(2)}</Text>
-                      <TouchableOpacity
-                        style={styles.addBtn}
-                        activeOpacity={0.85}
-                        onPress={() => {
-                          addToCart(item, 1);
-                          showToast("Added to Cart!");
-                        }}
-                      >
-                        <Ionicons name="add" size={18} color="#FFF" />
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                </View>
-              </View>
-            );
-          }}
+          renderItem={renderWishlistItem}
         />
 
         {toastMsg ? (

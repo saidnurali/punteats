@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
   View,
   Text,
@@ -412,10 +412,21 @@ export default function HomeScreen() {
     return foods;
   }, [allDishes, selectedCategoryId, selectedCategoryName, priceRange, sortBy]);
 
-  const activeCategories = categoriesList;
+  // Build a quantity map so renderItem doesn't do O(n) .find() per dish
+  // Before: cartItems.find(c => c.id === item.id)?.quantity — O(n) × numDishes per render
+  // After: O(1) Map lookup per dish
+  const cartQuantityMap = useMemo(() => {
+    const map = new Map<string, number>();
+    cartItems.forEach(c => map.set(c.id, c.quantity));
+    return map;
+  }, [cartItems]);
 
-
-  const renderHeader = () => (
+  // Stable string key derived from cart — avoids passing the whole cartItems array as extraData
+  // which caused ALL FlatList items to re-render whenever any cart field changed
+  const cartExtraKey = useMemo(() => cartItems.map(c => `${c.id}:${c.quantity}`).join(','), [cartItems]);
+  // Memoized header — was an inline function, causing ListHeaderComponent to
+  // unmount + remount on every parent render (every category tap, every cart update)
+  const MemoizedHeader = useMemo(() => (
     <>
       {/* ── Search ── */}
       <Animated.View style={styles.searchRow}>
@@ -499,9 +510,11 @@ export default function HomeScreen() {
 
       <View style={{ height: 16 }} />
     </>
-  );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  ), [isLoading, allDishes.length, categoriesWithItems, selectedCategoryId]);
 
-  const renderFooter = () => (
+  // Memoized footer — same issue as header: was inline, causing remount on every render
+  const MemoizedFooter = useMemo(() => (
     <>
       {/* ── Popular Restaurants ── */}
       <Animated.View style={styles.sectionRow} entering={FadeInDown.duration(400).delay(260)}>
@@ -552,7 +565,35 @@ export default function HomeScreen() {
         </TouchableOpacity>
       </Animated.View>
     </>
-  );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  ), [isLoading, allDishes.length, restaurantsList]);
+
+  // Stable renderItem — useCallback ensures HomeDishCard's React.memo actually works.
+  // Without this, the inline anonymous function recreates every render, defeating memoization.
+  const renderFoodItem = useCallback(({ item }: { item: any }) => {
+    if (isLoading && allDishes.length === 0) {
+      return (
+        <View style={{ width: "48%" }}>
+          <FoodCardSkeleton />
+        </View>
+      );
+    }
+    const fav = isWishlisted(item.id);
+    // O(1) Map lookup — was O(n) .find() per dish per render (50 dishes × every cart update)
+    const cartQuantity = cartQuantityMap.get(item.id) ?? 0;
+    return (
+      <HomeDishCard
+        item={item}
+        fav={fav}
+        cartQuantity={cartQuantity}
+        toggleWishlist={toggleWishlist}
+        addToCart={addToCart}
+        updateQuantity={updateQuantity}
+        removeFromCart={removeFromCart}
+      />
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoading, allDishes.length, cartQuantityMap, isWishlisted]);
 
   return (
     <Animated.View style={{ flex: 1 }}>
@@ -595,31 +636,10 @@ export default function HomeScreen() {
             </View>
           ) : null
         }
-        ListHeaderComponent={<View>{renderHeader()}</View>}
-        ListFooterComponent={<View>{renderFooter()}</View>}
-        extraData={cartItems}
-        renderItem={({ item }) => {
-          if (isLoading && allDishes.length === 0) {
-            return (
-              <View style={{ width: "48%" }}>
-                <FoodCardSkeleton />
-              </View>
-            );
-          }
-          const fav = isWishlisted(item.id);
-          const cartQuantity = cartItems.find(c => c.id === item.id)?.quantity ?? 0;
-          return (
-            <HomeDishCard
-              item={item}
-              fav={fav}
-              cartQuantity={cartQuantity}
-              toggleWishlist={toggleWishlist}
-              addToCart={addToCart}
-              updateQuantity={updateQuantity}
-              removeFromCart={removeFromCart}
-            />
-          );
-        }}
+        ListHeaderComponent={<View>{MemoizedHeader}</View>}
+        ListFooterComponent={<View>{MemoizedFooter}</View>}
+        extraData={cartExtraKey}
+        renderItem={renderFoodItem}
       />
       
       <FilterModal
