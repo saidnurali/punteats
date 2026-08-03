@@ -126,23 +126,69 @@ export default function OrdersScreen() {
     let activeChannel: any;
 
     const initialize = async () => {
-      await loadCacheOnce();
-      await fetchOrders();
-
+      // 1. Read session ONCE — reuse it for cache, fetch, and realtime
+      let userId: string | undefined;
+      let userPhone: string | undefined;
       try {
         const storedSession = await AsyncStorage.getItem('puntgo_user_session');
-        let userPhone = "+252 90 7112233"; // Fallback to prevent global listening
-        let userId: string | undefined;
         if (storedSession) {
           const p = JSON.parse(storedSession);
-          userPhone = p.phone_number || userPhone;
           userId = p.id;
+          userPhone = p.phone_number;
         }
+      } catch {}
 
-        let filter = `customer_phone=eq.${userPhone}`;
-        if (userId) {
-          filter = `user_id=eq.${userId}`;
+      // 2. Show cache immediately (non-blocking) while network fetch runs in parallel
+      const cachePromise = AsyncStorage.getItem('@cached_my_orders').then(cached => {
+        if (cached && cached !== '[]') {
+          try {
+            const parsed = JSON.parse(cached);
+            if (parsed.length > 0) {
+              setOrders(parsed);
+              setLoading(false);
+            }
+          } catch {}
         }
+      }).catch(() => {});
+
+      // 3. Build + fire network query (parallel with cache read above)
+      const fetchPromise = (async () => {
+        try {
+          let query = supabase.from('orders').select('*').limit(30);
+          if (userId) {
+            query = query.eq('user_id', userId);
+          } else if (userPhone) {
+            query = query.eq('customer_phone', userPhone);
+          } else {
+            query = query.eq('customer_phone', "+252 90 7112233");
+          }
+
+          const { data, error } = await query.order('created_at', { ascending: false });
+          let finalData = data;
+          if (error && typeof error.message === 'string' && error.message.trim().startsWith('[')) {
+            try { finalData = JSON.parse(error.message); } catch {}
+          }
+          if (finalData) {
+            const mapped = finalData.map(mapOrder);
+            setOrders(mapped);
+            AsyncStorage.setItem('@cached_my_orders', JSON.stringify(mapped)).catch(() => null);
+          }
+        } catch (err) {
+          console.warn("fetchOrders unexpected error:", err);
+        } finally {
+          setLoading(false);
+        }
+      })();
+
+      // 4. Wait for cache to populate first, then let network update silently
+      await cachePromise;
+      await fetchPromise;
+
+      // 5. Set up realtime with the already-known user identifiers
+      try {
+        const filter = userId
+          ? `user_id=eq.${userId}`
+          : `customer_phone=eq.${userPhone ?? "+252 90 7112233"}`;
 
         const channelTopic = `my_orders_sync_${Math.random().toString(36).substring(2, 9)}`;
         activeChannel = supabase.channel(channelTopic)
@@ -157,7 +203,7 @@ export default function OrdersScreen() {
               } else if (payload.eventType === 'DELETE') {
                 updated = updated.filter(o => o.dbId !== payload.old.id);
               }
-              AsyncStorage.setItem('@cached_my_orders', JSON.stringify(updated)).catch(()=>null);
+              AsyncStorage.setItem('@cached_my_orders', JSON.stringify(updated)).catch(() => null);
               return updated;
             });
           })
@@ -170,9 +216,7 @@ export default function OrdersScreen() {
     initialize();
 
     return () => {
-      if (activeChannel) {
-        supabase.removeChannel(activeChannel);
-      }
+      if (activeChannel) supabase.removeChannel(activeChannel);
     };
   }, []);
 

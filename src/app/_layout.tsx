@@ -15,8 +15,8 @@ LogBox.ignoreLogs([
 
 Sentry.init({
   dsn: "https://0f091efee75d48364fd93e05442fa60d@o4511773028253696.ingest.de.sentry.io/4511773045751888",
-  // Set tracesSampleRate to 1.0 to capture 100% of transactions for tracing.
-  tracesSampleRate: 1.0,
+  // 5% sample rate — 100% was instrumenting every navigation/fetch/render in production
+  tracesSampleRate: 0.05,
 });
 
 import * as SplashScreen from 'expo-splash-screen';
@@ -39,14 +39,18 @@ function RootLayout() {
         setIsAuthenticated(false);
       }
       setInitialized(true);
-      // Wait for layout to settle before hiding splash screen
-      setTimeout(() => {
-        SplashScreen.hideAsync();
-      }, 50);
+      // Hide splash screen after layout settles
+      setTimeout(() => { SplashScreen.hideAsync(); }, 50);
     };
 
     checkAuth();
-  }, [segments]); // Check auth when navigation segments change
+
+    // Pre-warm the data cache in background so Home screen data appears faster
+    import('@/lib/DataCache').then(({ fetchRestaurants }) => {
+      fetchRestaurants().catch(() => {});
+    }).catch(() => {});
+
+  }, []); // Run once on mount only — not on every tab change
 
   useEffect(() => {
     if (!initialized) return;

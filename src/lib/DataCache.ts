@@ -1,8 +1,10 @@
 import { supabase } from "@/lib/supabase";
 import { mapFoodItemToProduct, Product, PRODUCTS_DATA, setProductsData } from "@/lib/products";
 import { RestaurantItem } from "@/components/RestaurantCard";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const DEFAULT_COVER = "https://images.unsplash.com/photo-1544025162-d76694265947?w=600&auto=format&fit=crop&q=80";
+const RESTAURANTS_DISK_CACHE_KEY = "@puntgo_restaurants_cache_v1";
 
 export const CACHE = {
   restaurants: [] as RestaurantItem[],
@@ -16,7 +18,26 @@ export function getCachedRestaurants(): RestaurantItem[] {
   return CACHE.restaurants;
 }
 
+/** Load previously persisted restaurants from disk into memory — fast, no network */
+async function loadRestaurantsFromDisk(): Promise<void> {
+  if (CACHE.restaurants.length > 0) return; // already warm
+  try {
+    const raw = await AsyncStorage.getItem(RESTAURANTS_DISK_CACHE_KEY);
+    if (raw) {
+      const parsed: RestaurantItem[] = JSON.parse(raw);
+      if (parsed.length > 0 && CACHE.restaurants.length === 0) {
+        CACHE.restaurants = parsed;
+        // Also rebuild restaurantsById from disk data
+        parsed.forEach(r => { CACHE.restaurantsById[r.id] = r; });
+      }
+    }
+  } catch {}
+}
+
 export async function fetchRestaurants(forceRefresh = false): Promise<RestaurantItem[]> {
+  // Hydrate from disk on first call so UI can render instantly
+  await loadRestaurantsFromDisk();
+
   const now = Date.now();
   // If we have cache and it's not a forced refresh, return immediately while refreshing in background if > 15s old
   if (CACHE.restaurants.length > 0 && !forceRefresh) {
@@ -77,6 +98,8 @@ async function revalidateRestaurants(): Promise<RestaurantItem[]> {
 
     CACHE.restaurants = mapped;
     CACHE.lastRestaurantsFetch = Date.now();
+    // Persist to disk for instant cold-start on next app open
+    AsyncStorage.setItem(RESTAURANTS_DISK_CACHE_KEY, JSON.stringify(mapped)).catch(() => {});
     return mapped;
   } catch (err) {
     console.error("Error revalidating restaurants cache:", err);

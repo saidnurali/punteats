@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { Tabs } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { View, Text, StyleSheet, Platform, Alert } from "react-native";
@@ -14,9 +14,12 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 export default function TabsLayout() {
   const insets = useSafeAreaInsets();
   
-  // Dynamic bottom calculation to strictly force Android upward
-  const androidBottomPadding = Math.max(insets.bottom, 12);
-  const androidHeight = 65 + androidBottomPadding;
+  // Memoize computed values — insets don't change, but without memo these
+  // recompute on every parent re-render (cart count badge update, etc.)
+  const { androidBottomPadding, androidHeight } = useMemo(() => ({
+    androidBottomPadding: Math.max(insets.bottom, 12),
+    androidHeight: 65 + Math.max(insets.bottom, 12),
+  }), [insets.bottom]);
 
   const { totalItems } = useCart();
   const { expoPushToken } = usePushNotifications();

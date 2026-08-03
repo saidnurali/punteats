@@ -6,9 +6,9 @@ import {
   TouchableOpacity,
   Dimensions,
   StatusBar,
+  FlatList,
   Animated as RNAnimated,
 } from "react-native";
-import { FlashList } from "@shopify/flash-list";
 import { Image } from "expo-image";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -302,11 +302,10 @@ export default function CategoriesScreen() {
         </View>
       </SafeAreaView>
 
-      <FlashList
+      <FlatList
         data={activeTab === "Dishes" ? validDishes : []}
         keyExtractor={(item) => item.id}
         numColumns={2}
-        estimatedItemSize={230}
         columnWrapperStyle={{ justifyContent: "space-between", paddingHorizontal: 18 }}
         contentContainerStyle={{ paddingBottom: 40 }}
         showsVerticalScrollIndicator={false}

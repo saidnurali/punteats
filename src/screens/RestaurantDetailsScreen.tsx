@@ -11,7 +11,6 @@ import {
   StatusBar,
   FlatList,
 } from "react-native";
-import { FlashList } from "@shopify/flash-list";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Image } from "expo-image";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -112,6 +111,23 @@ const MenuDishCard = React.memo(({
 );
 
 
+/** Pure function — outside component so it's never redefined on render */
+function getCategoryEmoji(cat: string): string {
+  const lower = cat.toLowerCase();
+  if (lower.includes("pizza")) return "🍕";
+  if (lower.includes("burger")) return "🍔";
+  if (lower.includes("chicken")) return "🍗";
+  if (lower.includes("dessert") || lower.includes("cake")) return "🍰";
+  if (lower.includes("drink") || lower.includes("cola")) return "🥤";
+  if (lower.includes("coffee") || lower.includes("tea")) return "☕️";
+  if (lower.includes("rice")) return "🍚";
+  if (lower.includes("shawarma")) return "🌯";
+  if (lower.includes("pasta")) return "🍝";
+  if (lower.includes("bbq") || lower.includes("grill")) return "🥩";
+  if (lower.includes("somali")) return "🐪";
+  return "🍽️";
+}
+
 export default function RestaurantDetailsScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
@@ -124,22 +140,6 @@ export default function RestaurantDetailsScreen() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<"Menu" | "Reviews" | "Info">("Menu");
   const [selectedCategory, setSelectedCategory] = useState("All");
-
-  const getCategoryEmoji = (cat: string) => {
-    const lower = cat.toLowerCase();
-    if (lower.includes("pizza")) return "🍕";
-    if (lower.includes("burger")) return "🍔";
-    if (lower.includes("chicken")) return "🍗";
-    if (lower.includes("dessert") || lower.includes("cake")) return "🍰";
-    if (lower.includes("drink") || lower.includes("cola")) return "🥤";
-    if (lower.includes("coffee") || lower.includes("tea")) return "☕️";
-    if (lower.includes("rice")) return "🍚";
-    if (lower.includes("shawarma")) return "🌯";
-    if (lower.includes("pasta")) return "🍝";
-    if (lower.includes("bbq") || lower.includes("grill")) return "🥩";
-    if (lower.includes("somali")) return "🐪";
-    return "🍽️";
-  };
 
   const restFav = useMemo(() => {
     if (!restaurant) return false;
@@ -177,55 +177,51 @@ export default function RestaurantDetailsScreen() {
       return;
     }
     try {
-      // 0. Try to load from cache instantly
-      let hasCache = false;
-      const cachedRest = await AsyncStorage.getItem(`@cached_rest_${id}`);
-      const cachedFoods = await AsyncStorage.getItem(`@cached_foods_${id}`);
+      // 1. Read BOTH caches in parallel — instant UI if cache exists
+      const [cachedRest, cachedFoods] = await Promise.all([
+        AsyncStorage.getItem(`@cached_rest_${id}`),
+        AsyncStorage.getItem(`@cached_foods_${id}`),
+      ]);
       if (cachedRest && cachedFoods && cachedFoods !== '[]') {
         setRestaurant(JSON.parse(cachedRest));
         setFoodItems(JSON.parse(cachedFoods));
-        hasCache = true;
-        setLoading(false); // Instantly show cached UI
+        setLoading(false); // Show cached UI instantly
       }
 
-      // 1. Fetch restaurant info silently
-      let queryRest = supabase.from("restaurants").select("*");
+      // 2. Fire ALL three Supabase queries in PARALLEL — was sequential (3 round trips)
+      let restQuery = supabase.from("restaurants").select("*");
       if (!isNaN(Number(id))) {
-        queryRest = queryRest.or(`id.eq.${id},id.eq.${Number(id)}`);
+        restQuery = restQuery.or(`id.eq.${id},id.eq.${Number(id)}`);
       } else {
-        queryRest = queryRest.eq("id", id);
-      }
-      const { data: restData } = await queryRest.single();
-
-      if (restData) {
-        setRestaurant(restData);
-        AsyncStorage.setItem(`@cached_rest_${id}`, JSON.stringify(restData)).catch(()=>null);
+        restQuery = restQuery.eq("id", id);
       }
 
-      // 2. Fetch food items linked specifically to this restaurant ID
-      const { data: foods } = await supabase
-        .from("food_items")
-        .select("*")
-        .eq("restaurant_id", id);
-        
-      if (foods && foods.length > 0) {
-        const mappedFoods = foods.map(mapFoodItemToProduct);
+      let reviewsQuery = supabase.from("reviews").select("*").order("created_at", { ascending: false });
+      if (!isNaN(Number(id))) {
+        reviewsQuery = reviewsQuery.or(`restaurant_id.eq.${id},restaurant_id.eq.${Number(id)}`);
+      } else {
+        reviewsQuery = reviewsQuery.eq("restaurant_id", id);
+      }
+
+      const [restResult, foodsResult, reviewsResult] = await Promise.all([
+        restQuery.single(),
+        supabase.from("food_items").select("*").eq("restaurant_id", id),
+        reviewsQuery,
+      ]);
+
+      if (restResult.data) {
+        setRestaurant(restResult.data);
+        AsyncStorage.setItem(`@cached_rest_${id}`, JSON.stringify(restResult.data)).catch(() => null);
+      }
+      if (foodsResult.data && foodsResult.data.length > 0) {
+        const mappedFoods = foodsResult.data.map(mapFoodItemToProduct);
         setFoodItems(mappedFoods);
-        AsyncStorage.setItem(`@cached_foods_${id}`, JSON.stringify(mappedFoods)).catch(()=>null);
+        AsyncStorage.setItem(`@cached_foods_${id}`, JSON.stringify(mappedFoods)).catch(() => null);
+      }
+      if (reviewsResult.data) {
+        setReviews(reviewsResult.data);
       }
 
-      // 3. Fetch real reviews for this restaurant
-      let queryReviews = supabase.from("reviews").select("*").order("created_at", { ascending: false });
-      if (!isNaN(Number(id))) {
-        queryReviews = queryReviews.or(`restaurant_id.eq.${id},restaurant_id.eq.${Number(id)}`);
-      } else {
-        queryReviews = queryReviews.eq("restaurant_id", id);
-      }
-      const { data: reviewsData } = await queryReviews;
-      if (reviewsData) {
-        setReviews(reviewsData);
-      }
-      
       setLoading(false);
     } catch (err) {
       console.error("Error fetching restaurant details:", err);
@@ -234,23 +230,22 @@ export default function RestaurantDetailsScreen() {
   };
 
   useEffect(() => {
-    let isMounted = true;
-    if (isMounted) {
-      loadData();
-    }
-    
+    loadData();
+
+    // Scoped realtime: only listen to changes for THIS restaurant's data
     const channelTopic = `restaurant_${id}_sync_${Math.random().toString(36).substring(2, 9)}`;
     const channel = supabase.channel(channelTopic)
-      .on("postgres_changes", { event: "*", schema: "public", table: "restaurants" }, () => {
-        loadData();
-      })
-      .on("postgres_changes", { event: "*", schema: "public", table: "food_items" }, () => {
-        loadData();
-      })
+      .on("postgres_changes", {
+        event: "*", schema: "public", table: "food_items",
+        filter: `restaurant_id=eq.${id}`,
+      }, () => { loadData(); })
+      .on("postgres_changes", {
+        event: "UPDATE", schema: "public", table: "restaurants",
+        filter: `id=eq.${id}`,
+      }, () => { loadData(); })
       .subscribe();
 
     return () => {
-      isMounted = false;
       supabase.removeChannel(channel);
     };
   }, [id]);
@@ -272,15 +267,25 @@ export default function RestaurantDetailsScreen() {
     return foodItems.filter(item => item.category?.trim().toLowerCase() === cleanSelected);
   }, [selectedCategory, foodItems]);
 
+  // O(1) Map lookup — was running .filter() inside render for every category tab
+  const categoryCountMap = useMemo(() => {
+    const map = new Map<string, number>();
+    map.set('All', foodItems.length);
+    foodItems.forEach(item => {
+      const cat = item.category?.trim().toLowerCase() || '';
+      map.set(cat, (map.get(cat) || 0) + 1);
+    });
+    return map;
+  }, [foodItems]);
+
   const getCategoryCount = (catName: string) => {
-    if (catName === 'All') return foodItems.length;
-    const cleanCat = catName.trim().toLowerCase();
-    return foodItems.filter(item => item.category?.trim().toLowerCase() === cleanCat).length;
+    if (catName === 'All') return categoryCountMap.get('All') ?? 0;
+    return categoryCountMap.get(catName.trim().toLowerCase()) ?? 0;
   };
 
   const availableCategories = useMemo(() => {
     return Object.keys(groupedMenu).filter(cat => getCategoryCount(cat) > 0);
-  }, [groupedMenu, foodItems]);
+  }, [groupedMenu, categoryCountMap]);
 
   const coverUri = restaurant?.cover_image || DEFAULT_COVER;
 
@@ -330,11 +335,10 @@ export default function RestaurantDetailsScreen() {
       {loading && !restaurant ? (
         <RestaurantHeaderSkeleton />
       ) : (
-      <FlashList
+      <FlatList
         data={activeTab === "Menu" && !loading ? activeDishes : []}
         keyExtractor={(item) => item.id}
         numColumns={2}
-        estimatedItemSize={230}
         columnWrapperStyle={activeTab === "Menu" && !loading && activeDishes.length > 0 ? { justifyContent: "space-between", paddingHorizontal: 16 } : undefined}
         contentContainerStyle={{ paddingBottom: totalItems > 0 ? 150 : 30 }}
         showsVerticalScrollIndicator={false}

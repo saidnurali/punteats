@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from "react";
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Platform } from "react-native";
 import { Product } from "@/lib/products";
@@ -59,9 +59,17 @@ const safeStorage = {
 
 const CartContext = createContext<CartContextType | undefined>(undefined);
 
+/** Stable cart key — avoids JSON.stringify on every addToCart call */
+function cartItemKey(id: string, variant?: any, addOns?: any[]): string {
+  const variantKey = variant?.name ?? '';
+  const addOnKey = Array.isArray(addOns) ? addOns.map(a => a.name).join(',') : '';
+  return `${id}::${variantKey}::${addOnKey}`;
+}
+
 export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Load cart on start
   useEffect(() => {
@@ -80,26 +88,26 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     loadCart();
   }, []);
 
-  // Save cart whenever it changes (only after initial load)
+  // Debounced save — prevents writing to disk on every rapid +/- tap
   useEffect(() => {
     if (!isLoaded) return;
-    const saveCart = async () => {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(async () => {
       try {
         await safeStorage.setItem(CART_STORAGE_KEY, JSON.stringify(cartItems));
-      } catch (error) {
-        // Safe storage handles all storage errors without logging or throwing
-      }
+      } catch (error) {}
+    }, 500);
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     };
-    saveCart();
   }, [cartItems, isLoaded]);
 
   const addToCart = useCallback((product: Product, quantity = 1) => {
     setCartItems((prevItems) => {
+      // Fast string key comparison — avoids JSON.stringify on every call
+      const newKey = cartItemKey(product.id, product.selectedVariant, product.selectedAddOns);
       const existingIndex = prevItems.findIndex(
-        (item) =>
-          item.id === product.id &&
-          JSON.stringify(item.selectedVariant || null) === JSON.stringify(product.selectedVariant || null) &&
-          JSON.stringify(item.selectedAddOns || []) === JSON.stringify(product.selectedAddOns || [])
+        (item) => cartItemKey(item.id, item.selectedVariant, item.selectedAddOns) === newKey
       );
       if (existingIndex > -1) {
         const updated = [...prevItems];

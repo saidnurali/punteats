@@ -7,8 +7,8 @@ import {
   Platform,
   StatusBar,
   Dimensions,
+  FlatList,
 } from "react-native";
-import { FlashList } from "@shopify/flash-list";
 import { Image } from "expo-image";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -73,11 +73,10 @@ export default function WishlistScreen() {
           </View>
         </View>
 
-        <FlashList
+        <FlatList
           data={validItems}
           keyExtractor={(item) => item.id}
           numColumns={2}
-          estimatedItemSize={200}
           contentContainerStyle={styles.scrollContent}
           columnWrapperStyle={styles.columnWrapper}
           showsVerticalScrollIndicator={false}

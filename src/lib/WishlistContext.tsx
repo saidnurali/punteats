@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from "react";
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Platform } from "react-native";
 import { Product, mapFoodItemToProduct } from "@/lib/products";
@@ -44,10 +44,22 @@ const WishlistContext = createContext<WishlistContextType | undefined>(undefined
 export const WishlistProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [wishlistItems, setWishlistItems] = useState<Product[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // O(1) lookup set — rebuilt only when wishlistItems changes
+  const wishlistSet = useMemo(() => new Set(wishlistItems.map(i => i.id)), [wishlistItems]);
 
   useEffect(() => {
     const loadWishlist = async () => {
       try {
+        // 1. Load local cache FIRST for instant UI — no network wait
+        const stored = await safeStorage.getItem(WISHLIST_STORAGE_KEY);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (parsed.length > 0) setWishlistItems(parsed);
+        }
+
+        // 2. Sync from Supabase in background without blocking UI
         const storedSession = await safeStorage.getItem("puntgo_user_session");
         if (storedSession) {
           const user = JSON.parse(storedSession);
@@ -56,63 +68,62 @@ export const WishlistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               .from('wishlist')
               .select('id, product:food_items(*, restaurant:restaurants(name))')
               .eq('user_id', user.id);
-              
+
             if (data) {
               const fetchedItems = data
                 .map((d: any) => d.product ? mapFoodItemToProduct(d.product) : null)
-                .filter(Boolean);
-              
+                .filter(Boolean) as Product[];
+
               if (fetchedItems.length > 0) {
                 setWishlistItems(fetchedItems);
-                setIsLoaded(true);
-                return;
               }
             }
           }
         }
-        
-        // Fallback to local
-        const stored = await safeStorage.getItem(WISHLIST_STORAGE_KEY);
-        if (stored) setWishlistItems(JSON.parse(stored));
-      } catch (error) {} finally {
+      } catch (error) {
+      } finally {
         setIsLoaded(true);
       }
     };
     loadWishlist();
   }, []);
 
+  // Debounced save — avoids hammering AsyncStorage on every rapid toggle
   useEffect(() => {
     if (!isLoaded) return;
-    const saveWishlist = async () => {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(async () => {
       try {
         await safeStorage.setItem(WISHLIST_STORAGE_KEY, JSON.stringify(wishlistItems));
       } catch (error) {}
+    }, 600);
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     };
-    saveWishlist();
   }, [wishlistItems, isLoaded]);
 
-  const isWishlisted = useCallback((id: string) => wishlistItems.some((item) => item.id === id), [wishlistItems]);
+  // O(1) via Set — was O(n) .some() called 50+ times per render
+  const isWishlisted = useCallback((id: string) => wishlistSet.has(id), [wishlistSet]);
 
   const toggleWishlist = useCallback(async (product: Product) => {
-    // Optimistic Update
+    // Optimistic update — immediate UI response, no waiting
     setWishlistItems((prev) => {
       const exists = prev.some((item) => item.id === product.id);
       if (exists) return prev.filter((item) => item.id !== product.id);
       return [...prev, product];
     });
 
-    // Supabase Sync
+    // Background Supabase sync — never blocks the UI
     try {
       const storedSession = await safeStorage.getItem("puntgo_user_session");
       if (storedSession) {
         const user = JSON.parse(storedSession);
         if (user?.id) {
-          const exists = wishlistItems.some((item) => item.id === product.id);
-          if (exists) {
-            // It was there, so we are removing it
+          // Use the Set snapshot for the correct pre-toggle state
+          const wasInWishlist = wishlistSet.has(product.id);
+          if (wasInWishlist) {
             await supabase.from('wishlist').delete().eq('user_id', user.id).eq('product_id', product.id);
           } else {
-            // It was not there, so we are adding it
             await supabase.from('wishlist').insert({ user_id: user.id, product_id: product.id });
           }
         }
@@ -120,11 +131,14 @@ export const WishlistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     } catch (err) {
       console.warn("Wishlist sync error:", err);
     }
-  }, [wishlistItems]);
+  }, [wishlistSet]);
 
   const clearWishlist = useCallback(() => setWishlistItems([]), []);
 
-  const value = useMemo(() => ({ wishlistItems, isWishlisted, toggleWishlist, clearWishlist }), [wishlistItems, isWishlisted, toggleWishlist, clearWishlist]);
+  const value = useMemo(
+    () => ({ wishlistItems, isWishlisted, toggleWishlist, clearWishlist }),
+    [wishlistItems, isWishlisted, toggleWishlist, clearWishlist]
+  );
 
   return (
     <WishlistContext.Provider value={value}>
