@@ -30,8 +30,11 @@ yarn-error.*
 .DS_Store
 *.pem
 
-# local env files
-.env*.local
+# Environment files — NEVER commit secrets
+.env
+.env.*
+.env.local
+.env.*.local
 
 # typescript
 *.tsbuildinfo
@@ -42,6 +45,16 @@ example
 /ios
 /android
 
-.env.local
+# Supabase CLI binaries — do NOT commit these (~150MB)
+supabase-go
+supabase_*.tar.gz
+supabase/bin/
+supabase/.temp/
 
-.env.local
+# Scratch/test files
+scratch/
+test.txt
+test-join.ts
+test_edge_function.js
+fetch_schema.js
+fix-images.js

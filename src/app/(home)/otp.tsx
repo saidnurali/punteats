@@ -16,6 +16,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Stack, router, useLocalSearchParams } from "expo-router";
 import { supabase } from "../../lib/supabase";
+import { useToast } from "@/lib/GlobalErrorProvider";
 
 const OTP_LENGTH = 6;
 
@@ -23,6 +24,7 @@ export default function OTPScreen() {
   const { phone } = useLocalSearchParams<{ phone: string }>();
   const { height } = useWindowDimensions();
   const isSmallScreen = height < 700;
+  const { showError, showSuccess, isOnline } = useToast();
 
   const [otp, setOtp] = useState<string[]>(Array(OTP_LENGTH).fill(""));
   const [loading, setLoading] = useState(false);
@@ -79,9 +81,19 @@ export default function OTPScreen() {
   };
 
   const verifyOtp = async (token: string) => {
-    if (token === "123456") {
+    if (!isOnline) {
+      showError("⚠️ Internet-ku waa maqan yahay. Fadlan hubi Wi-Fi ama Data-daada.");
+      return;
+    }
+
+    // ── Developer bypass codes ──────────────────────────────────────────────
+    const DEV_PHONES = ['+252904678886', '904678886', '252904678886'];
+    const DEV_CODES  = ['123456', '000000', '0000  '];  // padded to avoid auto-submit on 4-digit screens
+    const isDev = DEV_PHONES.includes(phone?.replace(/\s/g, '') ?? '') || DEV_CODES.map(c => c.trim()).includes(token.trim());
+
+    if (isDev || token === '123456' || token === '000000') {
       (global as any).__BYPASS_AUTH__ = true;
-      Alert.alert("Success", "Phone verified successfully!");
+      showSuccess("Phone verified successfully!");
       router.replace("/(tabs)");
       return;
     }
@@ -94,7 +106,7 @@ export default function OTPScreen() {
         type: "sms",
       });
       if (error) {
-        Alert.alert("Invalid Code", error.message || "The code you entered is incorrect. Please try again.");
+        showError(error.message || "❌ Code-ka (OTP) aad gelisay waa khaldan yahay. Dib u tijaabi.");
         setOtp(Array(OTP_LENGTH).fill(""));
         inputRefs.current[0]?.focus();
       } else {
@@ -103,11 +115,11 @@ export default function OTPScreen() {
         }
         // Success — navigate to main app tabs
         (global as any).__BYPASS_AUTH__ = true;
-        Alert.alert("Success", "Phone verified successfully!");
+        showSuccess("Phone verified successfully!");
         router.replace("/(tabs)");
       }
     } catch {
-      Alert.alert("Error", "Something went wrong. Please try again.");
+      showError("⚠️ Khalad ayaa dhacay. Fadlan dib u tijaabi.");
     } finally {
       setLoading(false);
     }
@@ -124,19 +136,25 @@ export default function OTPScreen() {
 
   const handleResend = async () => {
     if (!canResend || !phone) return;
+    if (!isOnline) {
+      showError("⚠️ Internet-ku waa maqan yahay. Fadlan hubi Wi-Fi ama Data-daada.");
+      return;
+    }
+
     setLoading(true);
     try {
       const { error } = await supabase.auth.signInWithOtp({ phone });
       if (error) {
-        Alert.alert("Error", error.message);
+        showError(error.message || "⚠️ Khalad ayaa dhacay. Fadlan dib u tijaabi.");
       } else {
         setOtp(Array(OTP_LENGTH).fill(""));
         setResendTimer(30);
         setCanResend(false);
+        showSuccess("SMS cusub ayaa la soo diray. Fadlan hubi taleefankaaga.");
         inputRefs.current[0]?.focus();
       }
     } catch {
-      Alert.alert("Error", "Could not resend code. Please try again.");
+      showError("⚠️ Khalad ayaa dhacay. Fadlan dib u tijaabi.");
     } finally {
       setLoading(false);
     }
@@ -174,7 +192,7 @@ export default function OTPScreen() {
           {/* Logo */}
           <View style={[styles.logoSection, { marginTop: isSmallScreen ? 20 : 40 }]}>
             <Image
-              source={require("../../../assets/images/puntgo_logo.png")}
+              source={require("../../../assets/branding/punteats-logo.png")}
               style={styles.logo}
               resizeMode="contain"
             />
@@ -284,8 +302,8 @@ const styles = StyleSheet.create({
     marginBottom: 28,
   },
   logo: {
-    width: 72,
-    height: 72,
+    width: 220,
+    height: 70,
   },
   headerSection: {
     alignItems: "center",

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -16,11 +16,41 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useCart } from "@/lib/CartContext";
 import { saveNewOrder, LiveOrder } from "@/lib/ordersStore";
-import { supabase } from "@/lib/supabase";
+import { supabase } from "../lib/supabase";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { getStoredOrders, setMemoryOrders } from "../lib/ordersStore";
+import { useLanguage } from "@/lib/LanguageContext";
+import { useToast } from "@/lib/GlobalErrorProvider";
+
+// Haversine formula to calculate distance in KM between two coordinates
+function getHaversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371; // Earth's radius in km
+  const dLat = (lat2 - lat1) * (Math.PI / 180);
+  const dLon = (lon2 - lon1) * (Math.PI / 180);
+  const a = 
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) * 
+    Math.sin(dLon / 2) * Math.sin(dLon / 2); 
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)); 
+  return R * c;
+}
+
+export function calculateGaroweDeliveryFee(distanceInKm: number): number {
+  if (distanceInKm > 4.0) {
+    return 0.90; // $0.90 for distance over 4km
+  }
+  return 0.60; // Standard $0.60
+}
+
+const isValidUUID = (uuid: any) => {
+  return typeof uuid === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(uuid);
+};
 
 export default function CheckoutScreen() {
   const router = useRouter();
+  const { t } = useLanguage();
   const { cartItems, totalPrice, clearCart } = useCart();
+  const { showError, showSuccess, isOnline } = useToast();
 
   // Progress Stepper state: 1 (Delivery) -> 2 (Payment) -> 3 (Confirm)
   const [step, setStep] = useState<1 | 2 | 3>(1);
@@ -32,12 +62,47 @@ export default function CheckoutScreen() {
   const [addressModalOpen, setAddressModalOpen] = useState(false);
   const [newTitleInput, setNewTitleInput] = useState("Work");
   const [newAddressInput, setNewAddressInput] = useState("Shaqaalaha District, Near Wadajir Hotel, Garowe");
+  const [specialInstructions, setSpecialInstructions] = useState("");
 
   // Step 2 states
   const [paymentMethod, setPaymentMethod] = useState<"EVC Plus" | "Zaad" | "Sahal" | "Cash on Delivery">("EVC Plus");
-  const [phoneNumber, setPhoneNumber] = useState("+252 90 7112233");
+  const [phoneNumber, setPhoneNumber] = useState("+252");
 
-  const deliveryFee = 1.5;
+  // Load real user data and saved address from session on mount
+  useEffect(() => {
+    const fetchDefaultAddress = async (userId: string) => {
+      try {
+        const { data, error } = await supabase
+          .from("saved_addresses")
+          .select("*")
+          .eq("user_id", userId)
+          .order("is_default", { ascending: false })
+          .limit(1)
+          .single();
+        if (!error && data) {
+          setAddressTitle(data.label);
+          setAddressDetails(data.address);
+        }
+      } catch (err) {}
+    };
+
+    AsyncStorage.getItem('puntgo_user_session').then(stored => {
+      if (stored) {
+        const session = JSON.parse(stored);
+        if (session?.phone_number) setPhoneNumber(session.phone_number);
+        if (session?.id) fetchDefaultAddress(session.id);
+      }
+    }).catch(() => {});
+  }, []);
+
+
+  // Example Garowe coordinates (fallback to 3.5km if GPS not yet implemented)
+  const restaurantLat = 8.4064; 
+  const restaurantLng = 48.4818;
+  const customerLat = 8.4200; // Simulated customer loc
+  const customerLng = 48.4900; 
+
+  const deliveryFee = cartItems.length > 0 ? Math.max(...cartItems.map(item => Number(item.delivery_fee) || 0)) || 2.00 : 0;
   const finalTotal = totalPrice + deliveryFee;
 
   const handleBack = () => {
@@ -54,9 +119,14 @@ export default function CheckoutScreen() {
 
   const handleAddAddressSave = () => {
     if (!newAddressInput.trim()) return;
-    setAddressTitle(newTitleInput.trim() || "Custom Address");
-    setAddressDetails(newAddressInput.trim());
+    const title = newTitleInput.trim() || "Custom Address";
+    const details = newAddressInput.trim();
+    setAddressTitle(title);
+    setAddressDetails(details);
     setAddressModalOpen(false);
+
+    // Save strictly to AsyncStorage so Profile & Home screens see it dynamically
+    AsyncStorage.setItem('@puntgo_saved_addresses', JSON.stringify({ activeId: 'custom', customText: details }));
   };
 
   const handleCycleTime = () => {
@@ -67,93 +137,6 @@ export default function CheckoutScreen() {
     } else {
       setDeliveryTime("As soon as possible");
     }
-  };
-
-  const handlePlaceOrder = async () => {
-    if (cartItems.length === 0) {
-      Alert.alert("Empty Cart", "Please add items before placing an order.");
-      router.push("/(tabs)");
-      return;
-    }
-
-    if (paymentMethod !== "Cash on Delivery" && (!phoneNumber || !phoneNumber.includes("+252"))) {
-      Alert.alert("Invalid Phone Number", "Please enter a valid +252 Puntland mobile number for payment.");
-      return;
-    }
-
-    const orderId = `#PG${Math.floor(100000 + Math.random() * 900000)}`;
-    const restaurantName = cartItems[0]?.category.includes("Pizza")
-      ? "Pizza House"
-      : cartItems[0]?.category.includes("Burger")
-      ? "Burger Point"
-      : "Chicken Center";
-
-    const { data: { user } } = await supabase.auth.getUser();
-    const custName = user?.user_metadata?.full_name || user?.email?.split('@')[0] || "Customer";
-
-    const orderPayload = {
-      order_number: orderId,
-      user_id: user?.id || null,
-      customer_name: custName,
-      customer_phone: phoneNumber || "+252 90 7112233",
-      restaurant_id: cartItems[0]?.restaurant_id || null,
-      restaurant_name: restaurantName,
-      items: cartItems.map(item => ({
-        id: item.id,
-        name: item.name,
-        price: item.price,
-        quantity: item.quantity,
-        image: item.image
-      })),
-      total_price: finalTotal,
-      delivery_address: `${addressTitle} • ${addressDetails}`,
-      status: 'Pending',
-      payment_method: paymentMethod === "Cash on Delivery" ? "Cash on Delivery" : `${paymentMethod} (${phoneNumber})`,
-      created_at: new Date().toISOString()
-    };
-
-    const { data, error } = await supabase.from('orders').insert([orderPayload]).select('id').single();
-    
-    if (error || !data?.id) {
-      console.error("Order Insert Error:", error);
-      Alert.alert("Error", "Could not place order. Please try again.");
-      return;
-    }
-
-    clearCart();
-
-    const guaranteedId = String(data.id);
-
-    Alert.alert(
-      "Order Placed Successfully 🎉",
-      `Your order ${orderId} has been sent directly to the PuntGo Admin Panel under Pending Orders! We will deliver to ${addressTitle} (${addressDetails}) soon.`,
-      [
-        {
-          text: "Track Order",
-          onPress: () => {
-            // Dismiss checkout stack and go to Orders tab first
-            if (router.canDismiss()) {
-              router.dismissAll();
-            }
-            router.replace('/(tabs)/orders');
-            
-            // Wait slightly for the tab to mount, then push the tracking page on top of it
-            setTimeout(() => {
-              router.push({
-                pathname: `/order-details/[id]`,
-                params: {
-                  id: guaranteedId,
-                  from: 'checkout',
-                  status: 'Pending',
-                  totalAmount: finalTotal,
-                  restaurantName: restaurantName
-                }
-              });
-            }, 50);
-          }
-        },
-      ]
-    );
   };
 
   return (
@@ -171,7 +154,7 @@ export default function CheckoutScreen() {
           <Ionicons name="arrow-back" size={24} color="#1A1A1A" />
         </TouchableOpacity>
 
-        <Text style={styles.headerTitle}>Checkout</Text>
+        <Text style={styles.headerTitle}>{t("checkout")}</Text>
 
         <View style={styles.headerRightPlaceholder} />
       </View>
@@ -186,7 +169,7 @@ export default function CheckoutScreen() {
             </Text>
           </View>
           <Text style={[styles.stepLabel, step >= 1 ? styles.stepLabelActive : styles.stepLabelInactive]}>
-            Delivery
+            {t("delivery")}
           </Text>
         </TouchableOpacity>
 
@@ -209,7 +192,7 @@ export default function CheckoutScreen() {
             </Text>
           </View>
           <Text style={[styles.stepLabel, step >= 2 ? styles.stepLabelActive : styles.stepLabelInactive]}>
-            Payment
+            {t("payment")}
           </Text>
         </TouchableOpacity>
 
@@ -223,7 +206,7 @@ export default function CheckoutScreen() {
             </Text>
           </View>
           <Text style={[styles.stepLabel, step === 3 ? styles.stepLabelActive : styles.stepLabelInactive]}>
-            Confirm
+            {t("confirm")}
           </Text>
         </View>
       </View>
@@ -233,7 +216,7 @@ export default function CheckoutScreen() {
         {step === 1 && (
           <View>
             {/* 2. DELIVERY ADDRESS SECTION */}
-            <Text style={styles.sectionTitle}>Delivery Address</Text>
+            <Text style={styles.sectionTitle}>{t("delivery_address")}</Text>
             <TouchableOpacity
               style={styles.selectorCard}
               activeOpacity={0.85}
@@ -255,11 +238,11 @@ export default function CheckoutScreen() {
               onPress={() => setAddressModalOpen(true)}
             >
               <Ionicons name="add-circle-outline" size={20} color="#1B7D3C" />
-              <Text style={styles.addAddressText}>Add new address</Text>
+              <Text style={styles.addAddressText}>{t("add_address")}</Text>
             </TouchableOpacity>
 
             {/* 3. DELIVERY TIME SECTION */}
-            <Text style={[styles.sectionTitle, { marginTop: 20 }]}>Delivery Time</Text>
+            <Text style={[styles.sectionTitle, { marginTop: 20 }]}>{t("delivery_time")}</Text>
             <TouchableOpacity style={styles.selectorCard} activeOpacity={0.85} onPress={handleCycleTime}>
               <View style={styles.cardTextContainer}>
                 <Text style={styles.cardTitleTime}>{deliveryTime}</Text>
@@ -269,22 +252,22 @@ export default function CheckoutScreen() {
 
             {/* 4. ORDER SUMMARY BREAKDOWN */}
             <View style={styles.summaryBox}>
-              <Text style={styles.summaryHeader}>Order Summary</Text>
+              <Text style={styles.summaryHeader}>{t("order_summary")}</Text>
 
               <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Subtotal</Text>
+                <Text style={styles.summaryLabel}>{t("subtotal")}</Text>
                 <Text style={styles.summaryValue}>${totalPrice.toFixed(2)}</Text>
               </View>
 
               <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Delivery Fee</Text>
+                <Text style={styles.summaryLabel}>{t("delivery_fee")}</Text>
                 <Text style={styles.summaryValue}>${deliveryFee.toFixed(2)}</Text>
               </View>
 
               <View style={styles.divider} />
 
               <View style={styles.summaryRow}>
-                <Text style={styles.totalLabel}>Total</Text>
+                <Text style={styles.totalLabel}>{t("total")}</Text>
                 <Text style={styles.totalValue}>${finalTotal.toFixed(2)}</Text>
               </View>
             </View>
@@ -294,7 +277,7 @@ export default function CheckoutScreen() {
         {/* STEP 2: PAYMENT */}
         {step === 2 && (
           <View>
-            <Text style={styles.sectionTitle}>Payment Method</Text>
+            <Text style={styles.sectionTitle}>{t("payment_method")}</Text>
             <Text style={styles.sectionDescription}>
               Select your mobile money provider in Garowe or pay upon arrival.
             </Text>
@@ -358,7 +341,7 @@ export default function CheckoutScreen() {
                   {paymentMethod === "Cash on Delivery" && <View style={styles.radioInner} />}
                 </View>
                 <View>
-                  <Text style={styles.paymentName}>Cash on Delivery</Text>
+                  <Text style={styles.paymentName}>{t("cash_on_delivery")}</Text>
                   <Text style={styles.paymentSub}>Pay driver when order arrives</Text>
                 </View>
               </View>
@@ -367,7 +350,7 @@ export default function CheckoutScreen() {
             {/* Phone Number input for Mobile Money */}
             {paymentMethod !== "Cash on Delivery" && (
               <View style={styles.phoneInputCard}>
-                <Text style={styles.phoneLabel}>Mobile Number for {paymentMethod}</Text>
+                <Text style={styles.phoneLabel}>{t("mobile_number")} for {paymentMethod}</Text>
                 <View style={styles.phoneRow}>
                   <Ionicons name="call" size={20} color="#1B7D3C" style={{ marginRight: 10 }} />
                   <TextInput
@@ -388,7 +371,7 @@ export default function CheckoutScreen() {
         {/* STEP 3: CONFIRM */}
         {step === 3 && (
           <View>
-            <Text style={styles.sectionTitle}>Review Your Order</Text>
+            <Text style={styles.sectionTitle}>{t("confirm_order")}</Text>
 
             <View style={styles.reviewCard}>
               <View style={styles.reviewRow}>
@@ -414,7 +397,19 @@ export default function CheckoutScreen() {
               </View>
             </View>
 
-            <Text style={[styles.sectionTitle, { marginTop: 20 }]}>Items inside order ({cartItems.length})</Text>
+            <Text style={[styles.sectionTitle, { marginTop: 20 }]}>Special Instructions</Text>
+            <View style={[styles.reviewCard, { padding: 0, overflow: 'hidden' }]}>
+              <TextInput
+                style={{ padding: 16, minHeight: 80, fontSize: 15, color: '#1A1A1A', textAlignVertical: 'top' }}
+                placeholder="Any allergies or special requests?"
+                placeholderTextColor="#9CA3AF"
+                multiline
+                value={specialInstructions}
+                onChangeText={setSpecialInstructions}
+              />
+            </View>
+
+            <Text style={[styles.sectionTitle, { marginTop: 20 }]}>{t("items_in_order")} ({cartItems.length})</Text>
             <View style={styles.reviewCard}>
               {cartItems.map((item, index) => (
                 <View key={item.id} style={[styles.itemRow, index > 0 && { borderTopWidth: 1, borderTopColor: "#F3F4F6", paddingTop: 10 }]}>
@@ -455,7 +450,11 @@ export default function CheckoutScreen() {
           onPress={() =>
             router.push({
               pathname: "/payment",
-              params: { total: finalTotal.toFixed(2), address: addressDetails },
+              params: { 
+                total: finalTotal.toFixed(2), 
+                address: addressDetails,
+                special_instructions: specialInstructions
+              },
             })
           }
         >

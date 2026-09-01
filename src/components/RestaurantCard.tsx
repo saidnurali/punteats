@@ -22,6 +22,7 @@ interface RestaurantCardProps {
   isFav: boolean;
   onToggleWishlist: () => void;
   onPress?: () => void;
+  style?: any;
 }
 
 const DEFAULT_COVER = "https://images.unsplash.com/photo-1544025162-d76694265947?w=600&auto=format&fit=crop&q=80";
@@ -31,6 +32,7 @@ export const RestaurantCard: React.FC<RestaurantCardProps> = React.memo(({
   isFav,
   onToggleWishlist,
   onPress,
+  style,
 }) => {
   const coverUri = item.coverImage || item.image || DEFAULT_COVER;
   const logoStr = item.logoImage || item.emoji || "🏪";
@@ -38,9 +40,12 @@ export const RestaurantCard: React.FC<RestaurantCardProps> = React.memo(({
 
   return (
     <TouchableOpacity
-      style={styles.card}
+      style={[styles.card, style]}
       activeOpacity={0.7}
       onPress={onPress}
+      accessible={true}
+      accessibilityRole="button"
+      accessibilityLabel={`Restaurant: ${item.name}, Rating: ${item.rating}, Delivery fee: ${item.fee}`}
     >
       <View style={styles.imgWrap}>
         <Image

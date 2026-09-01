@@ -5,8 +5,13 @@ import { supabase } from "@/lib/supabase";
 import { Session } from "@supabase/supabase-js";
 import { CartProvider } from "@/lib/CartContext";
 import { WishlistProvider } from "@/lib/WishlistContext";
+import { LanguageProvider } from "@/lib/LanguageContext";
+import { GlobalErrorProvider } from "@/lib/GlobalErrorProvider";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { LogBox } from "react-native";
+import { LogBox, DeviceEventEmitter } from "react-native";
+import { Image } from "expo-image";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { NotificationProvider } from "@/lib/NotificationContext";
 
 LogBox.ignoreLogs([
   "expo-notifications: Android Push notifications",
@@ -45,11 +50,23 @@ function RootLayout() {
 
     checkAuth();
 
-    // Pre-warm the data cache in background so Home screen data appears faster
-    import('@/lib/DataCache').then(({ fetchRestaurants }) => {
+    // Pre-warm the data cache in background so Home screen renders instantly
+    import('@/lib/DataCache').then(({ fetchRestaurants, fetchAllProducts }) => {
       fetchRestaurants().catch(() => {});
+      fetchAllProducts().catch(() => {});  // Also pre-warm products
     }).catch(() => {});
 
+    // Pre-fetch critical local/remote assets to prevent image layout flashing
+    Image.prefetch([
+      require("../../assets/images/hero-salad.png"),
+      "https://wsrv.nl/?url=pngimg.com/uploads/motorcycle/motorcycle_PNG3162.png&output=png"
+    ]);
+
+    const authListener = DeviceEventEmitter.addListener('AUTH_STATE_CHANGED', (isAuth: boolean) => {
+      setIsAuthenticated(isAuth);
+    });
+
+    return () => authListener.remove();
   }, []); // Run once on mount only — not on every tab change
 
   useEffect(() => {
@@ -70,16 +87,31 @@ function RootLayout() {
   }, [isAuthenticated, initialized, segments]);
 
   return (
-    <WishlistProvider>
-      <CartProvider>
-        <Stack
-          screenOptions={{
-            headerShown: false,
-            animation: "slide_from_right",
-          }}
-        />
-      </CartProvider>
-    </WishlistProvider>
+    <ErrorBoundary>
+      <LanguageProvider>
+        <WishlistProvider>
+          <CartProvider>
+            <GlobalErrorProvider>
+              <NotificationProvider>
+                <Stack
+                  screenOptions={{
+                    headerShown: false,
+                    animation: "slide_from_right",
+                  }}
+                >
+                  <Stack.Screen name="(home)" />
+                  <Stack.Screen name="(tabs)" />
+                  <Stack.Screen name="notifications" />
+                  <Stack.Screen name="search" />
+                  <Stack.Screen name="help" />
+                  <Stack.Screen name="saved-addresses" />
+                </Stack>
+              </NotificationProvider>
+            </GlobalErrorProvider>
+          </CartProvider>
+        </WishlistProvider>
+      </LanguageProvider>
+    </ErrorBoundary>
   );
 }
 

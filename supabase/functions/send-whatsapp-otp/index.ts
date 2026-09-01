@@ -5,9 +5,6 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const PHONE_NUMBER_ID = '1227157970480424';
-const WHATSAPP_ACCESS_TOKEN = 'EAIRwTT7bXSsBSIaYXWGvDJzZACA6yOgvxCqR00hCzZB5KXhQGDbMh4WRRZB6HxoNIrx1tT9PH0g5fY9BrwLwr1xjqdAVcllbPzZAQuYsLd9TlOOyBDicmQ9095hyu1VlIZA7oPnUOKRm419pGJe5szczfv2DZBhTtNre1wMq2YIRoLey3Uh9JmVNZAEvDU3norG85S08GdkDi0PWWntnZBPJMKvu3iGImb6NPeHoUqRHuI61mvf2brj6e2lDvC2FZB9yebxBXZAwMwewjGKZBNkuShW';
-
 serve(async (req) => {
   // Handle CORS preflight request
   if (req.method === 'OPTIONS') {
@@ -17,13 +14,41 @@ serve(async (req) => {
   try {
     const { phone, otp } = await req.json();
 
+    // ─── INPUT VALIDATION ───
+    if (!phone || !otp) {
+      return new Response(
+        JSON.stringify({ success: false, error: 'Missing phone or otp parameter' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // ─── SECRETS: Read from Supabase Edge Function secrets (NOT hardcoded) ───
+    const PHONE_NUMBER_ID = Deno.env.get('WHATSAPP_PHONE_NUMBER_ID') ?? '';
+    const WHATSAPP_ACCESS_TOKEN = Deno.env.get('WHATSAPP_ACCESS_TOKEN') ?? '';
+
+    if (!PHONE_NUMBER_ID || !WHATSAPP_ACCESS_TOKEN) {
+      console.error('Missing WHATSAPP_PHONE_NUMBER_ID or WHATSAPP_ACCESS_TOKEN in Edge Function secrets');
+      return new Response(
+        JSON.stringify({ success: false, error: 'Server configuration error — WhatsApp credentials not set' }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     // Ensure phone has proper international format without '+' or spaces (e.g. 252904678886)
     let cleanPhone = phone.replace(/\D/g, '');
     if (!cleanPhone.startsWith('252') && cleanPhone.length === 9) {
       cleanPhone = '252' + cleanPhone;
     }
 
-    // Direct Text Message Payload (NO TEMPLATE NEEDED!)
+    // Basic phone number validation
+    if (cleanPhone.length < 10 || cleanPhone.length > 15) {
+      return new Response(
+        JSON.stringify({ success: false, error: 'Invalid phone number format' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Direct Text Message Payload
     const payload = {
       messaging_product: 'whatsapp',
       recipient_type: 'individual',

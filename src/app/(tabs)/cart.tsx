@@ -14,6 +14,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { useCart } from "@/lib/CartContext";
+import { useLanguage } from "@/lib/LanguageContext";
 import Animated, { FadeIn } from "react-native-reanimated";
 
 /**
@@ -24,24 +25,38 @@ const CartItemRow = React.memo(({ item, onRemove, onDecrement, onIncrement }: {
   item: any;
   onRemove: (id: string) => void;
   onDecrement: (id: string) => void;
-  onIncrement: (id: string) => void;
-}) => (
+  onIncrement: (item: any) => void;
+}) => {
+  const safeImage = item.image || item.image_url || item.images?.[0] || item.coverImage;
+  const targetId = item.cartItemId || item.id;
+  
+  // Render subtext for variant and addons if they exist
+  const variantSubtext = item.selectedVariant ? `Variant: ${item.selectedVariant.name} ($${Number(item.selectedVariant.price || 0).toFixed(2)})` : '';
+  const addonsSubtext = Array.isArray(item.selectedAddOns) && item.selectedAddOns.length > 0
+    ? `Extras: ${item.selectedAddOns.map((a: any) => a.name).join(', ')}` 
+    : '';
+  const fullSubtext = [variantSubtext, addonsSubtext].filter(Boolean).join(' | ');
+
+  return (
   <View style={styles.card}>
     <Image
-      source={{ uri: item.image }}
+      source={{ uri: safeImage }}
       style={styles.itemImage}
       contentFit="cover" cachePolicy="memory-disk" transition={200}
       recyclingKey={item.id}
     />
     <View style={styles.itemDetails}>
-      <Text style={styles.itemName} numberOfLines={1}>{item.name}</Text>
+      <Text style={[styles.itemName, { marginBottom: fullSubtext ? 4 : 10 }]} numberOfLines={1}>{item.name}</Text>
+      {fullSubtext ? (
+        <Text style={styles.itemSubtext} numberOfLines={2}>{fullSubtext}</Text>
+      ) : null}
       <View style={styles.priceStepperRow}>
         <Text style={styles.itemPrice}>${item.price.toFixed(2)}</Text>
         <View style={styles.stepperContainer}>
           <TouchableOpacity
             style={styles.stepperBtn}
             activeOpacity={0.7}
-            onPress={() => item.quantity === 1 ? onRemove(item.id) : onDecrement(item.id)}
+            onPress={() => item.quantity === 1 ? onRemove(targetId) : onDecrement(targetId)}
           >
             <Ionicons name={item.quantity === 1 ? "trash-outline" : "remove"} size={16} color={item.quantity === 1 ? "#6B6B6B" : "#4A4A4A"} />
           </TouchableOpacity>
@@ -49,7 +64,7 @@ const CartItemRow = React.memo(({ item, onRemove, onDecrement, onIncrement }: {
           <TouchableOpacity
             style={styles.stepperBtn}
             activeOpacity={0.7}
-            onPress={() => onIncrement(item.id)}
+            onPress={() => onIncrement(item)}
           >
             <Ionicons name="add" size={16} color="#4A4A4A" />
           </TouchableOpacity>
@@ -57,16 +72,17 @@ const CartItemRow = React.memo(({ item, onRemove, onDecrement, onIncrement }: {
       </View>
     </View>
   </View>
-));
+)});
 
 export default function CartScreen() {
   const router = useRouter();
+  const { t } = useLanguage();
   const { returnTo } = useLocalSearchParams();
   const { cartItems, totalPrice, updateQuantity, removeFromCart, clearCart } = useCart();
 
   const handleBack = () => {
     if (returnTo) {
-      router.push(returnTo as string);
+      router.push(returnTo as any);
     } else if (router.canGoBack()) {
       router.back();
     } else {
@@ -82,7 +98,26 @@ export default function CartScreen() {
   // Stable handlers so CartItemRow's React.memo works
   const handleRemove = useCallback((id: string) => removeFromCart(id), [removeFromCart]);
   const handleDecrement = useCallback((id: string) => updateQuantity(id, -1), [updateQuantity]);
-  const handleIncrement = useCallback((id: string) => updateQuantity(id, 1), [updateQuantity]);
+  
+  const handleIncrement = useCallback((item: any) => {
+    const hasVariants = item.variants?.length > 0;
+    const hasAddOns = item.add_ons?.length > 0;
+    const uniqueId = item.cartItemId || item.id;
+
+    if (hasVariants || hasAddOns) {
+      Alert.alert(
+        "Customize Item",
+        "Repeat previous choice or customize a new one?",
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Repeat Choice", onPress: () => updateQuantity(uniqueId, 1) },
+          { text: "Choose New", onPress: () => router.push(`/product/${item.id}`) },
+        ]
+      );
+    } else {
+      updateQuantity(uniqueId, 1);
+    }
+  }, [updateQuantity, router]);
 
   const renderCartItem = useCallback(({ item }: { item: any }) => (
     <CartItemRow
@@ -94,22 +129,28 @@ export default function CartScreen() {
   ), [handleRemove, handleDecrement, handleIncrement]);
 
   // Stable extraData — avoids re-rendering all rows when only one quantity changes
-  const cartExtraKey = useMemo(() => cartItems.map(c => `${c.id}:${c.quantity}`).join(','), [cartItems]);
+  const cartExtraKey = useMemo(() => cartItems.map(c => `${c.cartItemId || c.id}:${c.quantity}`).join(','), [cartItems]);
+
+  const deliveryFee = useMemo(() => {
+    if (cartItems.length === 0) return 0;
+    const maxFee = Math.max(...cartItems.map(item => Number(item.delivery_fee) || 0));
+    return maxFee > 0 ? maxFee : 2.00; // fallback if needed
+  }, [cartItems]);
 
   const CartFooter = useMemo(() => (
     <>
       <View style={styles.bottomBarBreakdown}>
         <View style={styles.breakdownRow}>
-          <Text style={styles.breakdownLabel}>Subtotal</Text>
+          <Text style={styles.breakdownLabel}>{t("subtotal")}</Text>
           <Text style={styles.breakdownValue}>${totalPrice.toFixed(2)}</Text>
         </View>
         <View style={styles.breakdownRow}>
-          <Text style={styles.breakdownLabel}>Delivery Fee</Text>
-          <Text style={styles.breakdownValue}>$1.50</Text>
+          <Text style={styles.breakdownLabel}>{t("delivery_fee")}</Text>
+          <Text style={styles.breakdownValue}>${deliveryFee.toFixed(2)}</Text>
         </View>
         <View style={[styles.breakdownRow, { marginTop: 4 }]}>
-          <Text style={styles.breakdownTotalLabel}>Total</Text>
-          <Text style={styles.totalValue}>${(totalPrice + 1.5).toFixed(2)}</Text>
+          <Text style={styles.breakdownTotalLabel}>{t("total")}</Text>
+          <Text style={styles.totalValue}>${(totalPrice + deliveryFee).toFixed(2)}</Text>
         </View>
       </View>
       <TouchableOpacity
@@ -117,11 +158,11 @@ export default function CartScreen() {
         activeOpacity={0.88}
         onPress={handleProceedToPay}
       >
-        <Text style={styles.proceedBtnText}>Checkout</Text>
+        <Text style={styles.proceedBtnText}>{t("checkout")}</Text>
       </TouchableOpacity>
       <View style={{ height: 40 }} />
     </>
-  ), [totalPrice]);
+  ), [totalPrice, deliveryFee, t]);
 
   return (
     <Animated.View style={{ flex: 1 }} entering={FadeIn.duration(300)}>
@@ -141,13 +182,13 @@ export default function CartScreen() {
 
         <View style={styles.centerTitleContainer}>
           <Ionicons name="cart-outline" size={24} color="#1A1A1A" style={{ marginRight: 6 }} />
-          <Text style={styles.headerTitle}>Cart</Text>
+          <Text style={styles.headerTitle}>{t("my_cart")}</Text>
         </View>
 
         <View style={styles.rightPlaceholder}>
           {cartItems.length > 0 && (
             <TouchableOpacity onPress={clearCart} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-              <Text style={styles.clearText}>Clear</Text>
+              <Text style={styles.clearText}>{t("clear")}</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -159,32 +200,35 @@ export default function CartScreen() {
           <View style={styles.emptyIconCircle}>
             <Ionicons name="cart-outline" size={64} color="#5C9A44" />
           </View>
-          <Text style={styles.emptyTitle}>Your cart is empty</Text>
+          <Text style={styles.emptyTitle}>{t("cart_empty")}</Text>
           <Text style={styles.emptySubtitle}>
-            Looks like you haven&apos;t added any food yet. Discover delicious meals across Garowe!
+            {t("cart_empty_sub")}
           </Text>
           <TouchableOpacity
             style={styles.browseMenuBtn}
             activeOpacity={0.88}
             onPress={() => router.push("/(tabs)")}
           >
-            <Text style={styles.browseMenuBtnText}>Browse Food Menu</Text>
+            <Text style={styles.browseMenuBtnText}>{t("browse_food")}</Text>
           </TouchableOpacity>
         </View>
       ) : (
         // FlatList instead of ScrollView+map — virtualizes cart items
         // Removes cascading FadeInDown animations that ran 10 Reanimated worklets on mount
-        <FlatList
-          data={cartItems}
-          keyExtractor={(item, index) => `${item.id}-${index}`}
-          renderItem={renderCartItem}
-          extraData={cartExtraKey}
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.scrollContent}
-          initialNumToRender={10}
-          windowSize={3}
-          ListFooterComponent={<View style={styles.bottomBar}>{CartFooter}</View>}
-        />
+        <View style={{ flex: 1 }}>
+          <FlatList
+            style={{ flex: 1 }}
+            data={cartItems}
+            keyExtractor={(item, index) => `${item.cartItemId || item.id}-${index}`}
+            renderItem={renderCartItem}
+            extraData={cartExtraKey}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={[styles.scrollContent, { paddingBottom: 220 }]}
+            initialNumToRender={10}
+            windowSize={3}
+          />
+          <View style={styles.bottomBar}>{CartFooter}</View>
+        </View>
       )}
       </SafeAreaView>
     </Animated.View>
@@ -313,6 +357,17 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#4A4A4A",
     marginBottom: 10,
+  },
+  itemSubtext: {
+    fontSize: 12,
+    color: "#888888",
+    marginBottom: 8,
+    lineHeight: 16,
+  },
+  itemSubtitle: {
+    fontSize: 12,
+    fontWeight: "500",
+    color: "#7A7A7A",
   },
   priceStepperRow: {
     flexDirection: "row",

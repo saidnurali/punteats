@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from "react";
+import React, { useState, useRef, useCallback, useEffect } from "react";
 import {
   Text,
   View,
@@ -13,6 +13,9 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Stack, router } from "expo-router";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+
+const ONBOARDING_SEEN_KEY = "punteats_has_seen_onboarding";
 
 const ONBOARDING_SLIDES = [
   {
@@ -44,10 +47,30 @@ const ONBOARDING_SLIDES = [
 export default function OnboardingScreen() {
   const { width, height } = useWindowDimensions();
   const [currentIndex, setCurrentIndex] = useState(0);
+  // null = still checking AsyncStorage, false = show onboarding
+  const [hasChecked, setHasChecked] = useState(false);
   const flatListRef = useRef<FlatList>(null);
 
   const isSmallScreen = height < 700;
   const imageSize = Math.min(width * 0.80, height * 0.36);
+
+  // ── First-launch guard ──────────────────────────────────────────────────
+  useEffect(() => {
+    AsyncStorage.getItem(ONBOARDING_SEEN_KEY)
+      .then((value) => {
+        if (value === "true") {
+          // Already seen — skip to login immediately (no flash)
+          router.replace("/(home)");
+        } else {
+          // First launch — show onboarding
+          setHasChecked(true);
+        }
+      })
+      .catch(() => {
+        // On error, just show onboarding
+        setHasChecked(true);
+      });
+  }, []);
 
   // Called by Next button — scroll to next slide
   const handleNext = () => {
@@ -60,8 +83,11 @@ export default function OnboardingScreen() {
     }
   };
 
-  // Skip or Get Started both navigate to home
-  const handleFinish = () => {
+  // Skip or Get Started both navigate to home — mark seen first
+  const handleFinish = async () => {
+    try {
+      await AsyncStorage.setItem(ONBOARDING_SEEN_KEY, "true");
+    } catch {}
     router.replace("/(home)");
   };
 
@@ -110,6 +136,9 @@ export default function OnboardingScreen() {
       </View>
     </View>
   );
+
+  // Don't render anything while checking storage — prevents white flash then redirect
+  if (!hasChecked) return null;
 
   return (
     <SafeAreaView style={styles.container} edges={["top", "bottom"]}>

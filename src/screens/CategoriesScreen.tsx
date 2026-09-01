@@ -8,6 +8,7 @@ import {
   StatusBar,
   FlatList,
   Animated as RNAnimated,
+  Platform,
 } from "react-native";
 import { Image } from "expo-image";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -16,7 +17,7 @@ import { useRouter } from "expo-router";
 import Animated, { FadeInDown, FadeIn } from "react-native-reanimated";
 import { supabase } from "@/lib/supabase";
 import { CATEGORIES } from "@/lib/categoriesData";
-import { Product, fetchProductsFromSupabase } from "@/lib/products";
+import { Product } from "@/lib/products";
 import { useCart } from "@/lib/CartContext";
 import { RestaurantCard, RestaurantItem } from "@/components/RestaurantCard";
 import { useWishlist } from "@/lib/WishlistContext";
@@ -25,6 +26,8 @@ import {
   fetchCategoryDishes,
   getCachedRestaurants,
   fetchRestaurants,
+  fetchAllProducts,
+  getCachedAllProducts,
 } from "@/lib/DataCache";
 
 const { width } = Dimensions.get("window");
@@ -66,18 +69,34 @@ export default function CategoriesScreen() {
   const { addToCart } = useCart();
   const { isWishlisted, toggleWishlist } = useWishlist();
 
-  const [foodCategories, setFoodCategories] = useState(() => CATEGORIES.filter((c) => c.name !== "All" && c.id !== "0"));
+  const [foodCategories, setFoodCategories] = useState(() => {
+    // Compute active categories from in-memory cache immediately (zero network on warm cache)
+    const allProducts = getCachedAllProducts();
+    const base = CATEGORIES.filter((c) => c.name !== "All" && c.id !== "0");
+    if (allProducts.length === 0) return base;
+    return CATEGORIES.filter((c) => {
+      if (c.name === "All" || c.id === "0") return false;
+      return allProducts.some(p => p.category && (
+        p.category.toLowerCase() === c.name.toLowerCase() ||
+        p.category.toLowerCase().includes(c.name.toLowerCase())
+      ));
+    });
+  });
 
   useEffect(() => {
-    fetchProductsFromSupabase().then((products) => {
-      if (products) {
+    // Use shared cache — no duplicate network call
+    fetchAllProducts().then((products) => {
+      if (products && products.length > 0) {
         const active = CATEGORIES.filter((c) => {
           if (c.name === "All" || c.id === "0") return false;
-          return products.some(p => p.availability === "In Stock" && p.category && (p.category.toLowerCase() === c.name.toLowerCase() || p.category.toLowerCase().includes(c.name.toLowerCase())));
+          return products.some(p => p.availability === "In Stock" && p.category && (
+            p.category.toLowerCase() === c.name.toLowerCase() ||
+            p.category.toLowerCase().includes(c.name.toLowerCase())
+          ));
         });
-        setFoodCategories(active);
+        if (active.length > 0) setFoodCategories(active);
       }
-    });
+    }).catch(() => {});
   }, []);
 
   const [selectedCategory, setSelectedCategory] = useState<string>("Pizza");
@@ -120,23 +139,27 @@ export default function CategoriesScreen() {
     loadCategoryDishes(selectedCategory);
   }, [selectedCategory]);
 
+  const realtimeCatDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     loadTopRestaurants();
 
-    const channelTopic = `categories_screen_sync_${Math.random()
-      .toString(36)
-      .substring(2, 9)}`;
+    // Global listener for admin-pushed changes — debounced to avoid cascading reloads
+    const channelTopic = `categories_screen_sync`;
     const channel = supabase
       .channel(channelTopic)
       .on("postgres_changes", { event: "*", schema: "public", table: "food_items" }, () => {
-        loadCategoryDishes(selectedCategory);
+        if (realtimeCatDebounceRef.current) clearTimeout(realtimeCatDebounceRef.current);
+        realtimeCatDebounceRef.current = setTimeout(() => { loadCategoryDishes(selectedCategory); }, 2000);
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "restaurants" }, () => {
-        loadTopRestaurants();
+        if (realtimeCatDebounceRef.current) clearTimeout(realtimeCatDebounceRef.current);
+        realtimeCatDebounceRef.current = setTimeout(() => { loadTopRestaurants(); }, 2000);
       })
       .subscribe();
 
     return () => {
+      if (realtimeCatDebounceRef.current) clearTimeout(realtimeCatDebounceRef.current);
       supabase.removeChannel(channel);
     };
   }, []);
@@ -145,7 +168,6 @@ export default function CategoriesScreen() {
     <>
       {/* ── Section 1: Food Categories Grid (Top Section) ── */}
       <View style={styles.sectionContainer}>
-        <Text style={styles.subtitleText}>Food Categories</Text>
 
         <View style={styles.categoriesGrid}>
           {foodCategories.map((cat, index) => {
@@ -157,29 +179,13 @@ export default function CategoriesScreen() {
                 activeOpacity={0.7}
                 onPress={() => setSelectedCategory(cat.name)}
               >
-                <View
-                  style={[
-                    styles.circleContainer,
-                    active && styles.circleContainerActive,
-                  ]}
-                >
-                  {cat.image ? (
-                    <Image
-                      source={
-                        typeof cat.image === "string"
-                          ? { uri: cat.image }
-                          : cat.image
-                      }
-                      style={styles.catImage}
-                      contentFit="contain" cachePolicy="memory-disk" transition={200}
-                    />
-                  ) : (
-                    <Text style={styles.catEmoji}>{cat.emoji || "🍴"}</Text>
-                  )}
+                <View style={[styles.circleContainer, active && styles.circleContainerActive]}>
+                  <Text style={styles.catEmoji}>{cat.emoji || "🍴"}</Text>
                 </View>
                 <Text
                   style={[styles.catNameText, active && styles.catNameTextActive]}
                   numberOfLines={1}
+                  ellipsizeMode="tail"
                 >
                   {cat.name}
                 </Text>
@@ -234,7 +240,7 @@ export default function CategoriesScreen() {
     <View style={styles.restaurantsSection}>
       <View style={styles.restaurantsHeaderRow}>
         <Text style={styles.restaurantsSectionTitle}>Top Restaurants</Text>
-        <TouchableOpacity activeOpacity={0.7}>
+        <TouchableOpacity activeOpacity={0.7} onPress={() => router.push("/all-restaurants")}>
           <Text style={styles.seeAllText}>See all &gt;</Text>
         </TouchableOpacity>
       </View>
@@ -242,7 +248,7 @@ export default function CategoriesScreen() {
       {loadingRest ? (
         <View style={styles.restaurantsList}>
           {[...Array(2)].map((_, i) => (
-            <View key={i} style={{ marginBottom: 16 }}>
+            <View key={i} style={{ width: "48%", marginBottom: 16 }}>
               <SkeletonBox style={{ width: "100%", height: 160, borderRadius: 14 }} />
             </View>
           ))}
@@ -254,7 +260,7 @@ export default function CategoriesScreen() {
             return (
               <View
                 key={rest.id}
-                style={{ marginBottom: 16 }}
+                style={{ width: "48%", marginBottom: 16 }}
               >
                 <RestaurantCard
                   item={rest}
@@ -275,6 +281,7 @@ export default function CategoriesScreen() {
                     })
                   }
                   onPress={() => router.push(`/restaurant/${rest.id}`)}
+                  style={{ width: "100%", marginRight: 0 }}
                 />
               </View>
             );
@@ -297,13 +304,13 @@ export default function CategoriesScreen() {
           >
             <Ionicons name="arrow-back" size={22} color="#1A1A1A" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Categories</Text>
+          <Text style={styles.headerTitle}>More Category</Text>
           <View style={{ width: 38 }} />
         </View>
       </SafeAreaView>
 
       <FlatList
-        data={activeTab === "Dishes" ? validDishes : []}
+        data={dishes}
         keyExtractor={(item) => item.id}
         numColumns={2}
         columnWrapperStyle={{ justifyContent: "space-between", paddingHorizontal: 18 }}
@@ -317,51 +324,61 @@ export default function CategoriesScreen() {
         ListFooterComponent={renderFooter}
         ListEmptyComponent={renderEmptyDishes}
         renderItem={({ item, index }) => {
-          const safeImage = item?.images?.[0] || item?.image_url || item?.image;
           return (
-            <View
-              style={styles.dishCardWrap}
-            >
+            <View style={styles.dishCardWrap}>
               <TouchableOpacity
-                style={styles.dishCard}
+                style={styles.foodCardItem}
                 activeOpacity={0.7}
                 onPress={() => router.push(`/product/${item.id}`)}
               >
-                <Image
-                  source={{ uri: safeImage }}
-                  style={styles.dishThumb}
-                  contentFit="cover" cachePolicy="memory-disk" transition={200}
-                  recyclingKey={item.id}
-                />
+                <View style={styles.foodImgWrap}>
+                  <Image
+                    source={{ uri: item.image }}
+                    style={styles.foodImg}
+                    contentFit="cover" cachePolicy="memory-disk" transition={200}
+                    recyclingKey={item.id}
+                  />
+                  
+                  {/* Optional Promo Badge */}
+                  <View style={styles.foodPromoBadge}>
+                    <Text style={styles.foodPromoText}>PROMO</Text>
+                  </View>
+                </View>
 
-                <View style={styles.dishCardContent}>
-                  <Text style={styles.dishCardTitle} numberOfLines={1}>
+                <View style={styles.foodCardContent}>
+                  <Text style={styles.foodItemTitle} numberOfLines={1}>
                     {item.name}
                   </Text>
-                  <View style={styles.dishMetaRow}>
-                    <Ionicons
-                      name="time-outline"
-                      size={12}
-                      color="#6B7280"
-                      style={{ marginRight: 3 }}
-                    />
-                    <Text style={styles.dishTimeText}>
-                      {item.deliveryTime || "20-30 mins"}
-                    </Text>
+                  
+                  <View style={styles.foodSubRow}>
+                    <Text style={styles.foodSubText}>{item.distance || '1.5 km'}</Text>
+                    <Text style={styles.foodSubDivider}>|</Text>
+                    <Ionicons name="star" size={12} color="#F5A623" />
+                    <Text style={styles.foodSubText}> {item.rating || '0'} ({item.reviews_count || '0'})</Text>
                   </View>
-                  <View style={styles.dishBottomRow}>
-                    <Text style={styles.dishPriceText}>
-                      {item.priceFormatted}
-                    </Text>
+
+                  <View style={styles.foodBottomRow}>
+                    <View style={styles.foodPriceWrap}>
+                      <Text style={styles.foodItemPrice}>{item.priceFormatted}</Text>
+                      <Text style={styles.foodSubDivider}>|</Text>
+                      <Ionicons name="bicycle-outline" size={16} color="#1B7D3C" />
+                      <Text style={styles.foodDeliveryText}> {item.delivery_fee > 0 ? `$${Number(item.delivery_fee).toFixed(2)}` : 'Free'}</Text>
+                    </View>
+
                     <TouchableOpacity
-                      style={styles.addToCartBtn}
+                      style={styles.foodHeartBtn}
                       activeOpacity={0.7}
                       onPress={(e) => {
                         e.stopPropagation();
-                        addToCart(item, 1);
+                        // Wishlist toggle placeholder
                       }}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     >
-                      <Ionicons name="add" size={18} color="#FFFFFF" />
+                      <Ionicons
+                        name={"heart-outline"}
+                        size={22}
+                        color={"#EF4444"}
+                      />
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -423,48 +440,47 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
     justifyContent: "space-between",
+    paddingTop: 8,
   },
   gridItem: {
-    width: "23%",
+    width: "25%",
     alignItems: "center",
-    marginBottom: 18,
+    marginBottom: 24,
   },
   circleContainer: {
-    width: 68,
-    height: 68,
-    borderRadius: 34,
-    backgroundColor: "#F8F9FA",
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: "transparent",
     justifyContent: "center",
     alignItems: "center",
-    marginBottom: 6,
-    borderWidth: 2,
-    borderColor: "transparent",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
-    elevation: 2,
+    marginBottom: 8,
   },
   circleContainerActive: {
     backgroundColor: "#E8F5E9",
-    borderColor: "#1B7D3C",
   },
   catImage: {
-    width: 38,
-    height: 38,
+    width: 48,
+    height: 48,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 3,
   },
   catEmoji: {
-    fontSize: 30,
+    fontSize: 42,
   },
   catNameText: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: "600",
     color: "#4B5563",
     textAlign: "center",
+    width: "100%",
+    paddingHorizontal: 4,
   },
   catNameTextActive: {
     color: "#1B7D3C",
-    fontWeight: "800",
+    fontWeight: "700",
   },
   dishesSection: {
     paddingHorizontal: 18,
@@ -510,59 +526,86 @@ const styles = StyleSheet.create({
     width: "48%",
     marginBottom: 14,
   },
-  dishCard: {
+  foodCardItem: {
+    width: "100%", // Full width of the 48% parent container
     backgroundColor: "#FFFFFF",
-    borderRadius: 14,
+    borderRadius: 24,
+    marginBottom: 16,
     borderWidth: 1,
-    borderColor: "#E5E7EB",
+    borderColor: "#F3F4F6",
+    shadowColor: "#000", shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05, shadowRadius: 8, elevation: 2,
     overflow: "hidden",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
-    elevation: 2,
   },
-  dishThumb: {
+  foodImgWrap: {
     width: "100%",
-    height: 110,
-    backgroundColor: "#F3F4F6",
+    aspectRatio: 1, // Square ratio
+    position: "relative",
   },
-  dishCardContent: {
-    padding: 10,
+  foodImg: {
+    width: "100%",
+    height: "100%",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
   },
-  dishCardTitle: {
-    fontSize: 14,
+  foodPromoBadge: {
+    position: "absolute",
+    top: 12,
+    left: 12,
+    backgroundColor: "#4ADE80",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  foodPromoText: {
+    color: "#FFFFFF",
+    fontSize: 10,
+    fontWeight: "800",
+  },
+  foodCardContent: {
+    padding: 12,
+  },
+  foodItemTitle: {
+    fontSize: 15,
     fontWeight: "700",
     color: "#1A1A1A",
-    marginBottom: 4,
+    marginBottom: 6,
   },
-  dishMetaRow: {
+  foodSubRow: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 8,
+    marginBottom: 12,
   },
-  dishTimeText: {
-    fontSize: 11,
-    color: "#6B7280",
-    fontWeight: "500",
+  foodSubText: {
+    fontSize: 12,
+    color: "#6B6B6B",
   },
-  dishBottomRow: {
+  foodSubDivider: {
+    fontSize: 12,
+    color: "#D1D5DB",
+    marginHorizontal: 6,
+  },
+  foodBottomRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
   },
-  dishPriceText: {
-    fontSize: 15,
-    fontWeight: "800",
-    color: "#1B7D3C",
-  },
-  addToCartBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: "#1B7D3C",
-    justifyContent: "center",
+  foodPriceWrap: {
+    flexDirection: "row",
     alignItems: "center",
+  },
+  foodItemPrice: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#22C55E",
+  },
+  foodDeliveryText: {
+    fontSize: 12,
+    color: "#6B6B6B",
+  },
+  foodHeartBtn: {
+    width: 28, height: 28,
+    alignItems: "center", justifyContent: "center",
   },
   restaurantsSection: {
     paddingHorizontal: 18,
@@ -587,5 +630,8 @@ const styles = StyleSheet.create({
   },
   restaurantsList: {
     marginTop: 4,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
   },
 });

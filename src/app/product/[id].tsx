@@ -18,6 +18,7 @@ import Animated, { FadeInDown, FadeIn, FadeOut } from "react-native-reanimated";
 import { getProductById, fetchProductById, Product } from "@/lib/products";
 import { useCart } from "@/lib/CartContext";
 import { useWishlist } from "@/lib/WishlistContext";
+import { supabase } from "@/lib/supabase";
 import { ProductDetailSkeleton } from "@/components/SkeletonLoader";
 
 const { width } = Dimensions.get("window");
@@ -48,6 +49,31 @@ export default function ProductDetailsScreen() {
     };
   }, [id]);
 
+  const [reviews, setReviews] = useState<any[]>([]);
+
+  React.useEffect(() => {
+    if (product?.restaurant_id) {
+      supabase.from("order_reviews").select("*")
+        .eq("restaurant_id", product.restaurant_id)
+        .order("created_at", { ascending: false })
+        .limit(10)
+        .then(({ data }) => {
+          if (data) setReviews(data);
+        });
+    }
+  }, [product?.restaurant_id]);
+
+  const dynamicRating = React.useMemo(() => {
+    if (!reviews || reviews.length === 0) return product?.rating ? String(product.rating) : "0";
+    const total = reviews.reduce((sum, r) => sum + (r.rating || r.food_rating || 5), 0);
+    return (total / reviews.length).toFixed(1);
+  }, [reviews, product]);
+
+  const dynamicReviewsCount = React.useMemo(() => {
+    if (!reviews || reviews.length === 0) return product?.reviews_count || "0";
+    return reviews.length;
+  }, [reviews, product]);
+
   const [activeSlide, setActiveSlide] = useState(0);
   const [quantity, setQuantity] = useState(1);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -58,11 +84,8 @@ export default function ProductDetailsScreen() {
 
 
 
-  if (isLoading && !product) {
-    return <ProductDetailSkeleton />;
-  }
-
-  if (!product && !isLoading) {
+  if (!product) {
+    if (isLoading) return <ProductDetailSkeleton />;
     return (
       <SafeAreaView style={styles.errorContainer}>
         <Text style={styles.errorText}>Product not found.</Text>
@@ -84,7 +107,7 @@ export default function ProductDetailsScreen() {
 
   const handleIncrement = () => {
     if (existingCartItem) {
-      updateQuantity(product.id, 1);
+      updateQuantity(existingCartItem.cartItemId || product.id, 1);
     } else {
       setQuantity((prev) => prev + 1);
     }
@@ -93,9 +116,9 @@ export default function ProductDetailsScreen() {
   const handleDecrement = () => {
     if (existingCartItem) {
       if (existingCartItem.quantity > 1) {
-        updateQuantity(product.id, -1);
+        updateQuantity(existingCartItem.cartItemId || product.id, -1);
       } else {
-        removeFromCart(product.id);
+        removeFromCart(existingCartItem.cartItemId || product.id);
       }
     } else {
       setQuantity((prev) => (prev > 1 ? prev - 1 : 1));
@@ -103,6 +126,11 @@ export default function ProductDetailsScreen() {
   };
 
   const handleAddToCart = () => {
+    if (product?.availability && product.availability !== "In Stock") {
+      Alert.alert("Out of Stock", "Sorry, this item is currently unavailable.");
+      return;
+    }
+    
     if (product?.variants && product.variants.length > 0 && !selectedVariant) {
       Alert.alert("Selection Required", "Please choose a size/option before adding to cart.");
       return;
@@ -112,7 +140,7 @@ export default function ProductDetailsScreen() {
       ...product,
       selectedVariant,
       selectedAddOns
-    };
+    } as Product;
     addToCart(productPayload, quantity);
     setToastMessage(`Added ${quantity}x ${product.name} to cart`);
     setShowToast(true);
@@ -264,21 +292,21 @@ export default function ProductDetailsScreen() {
         >
           <View style={styles.badgeItem}>
             <Ionicons name="star" size={16} color="#F5A623" style={{ marginRight: 6 }} />
-            <Text style={styles.badgeTextDark}>{product.rating}</Text>
+            <Text style={styles.badgeTextDark}>{dynamicRating} ({dynamicReviewsCount} reviews)</Text>
           </View>
 
           <View style={styles.badgeSeparator} />
 
           <View style={styles.badgeItem}>
-            <Ionicons name="flame" size={16} color="#F5A623" style={{ marginRight: 6 }} />
-            <Text style={styles.badgeTextSecondary}>{product.calories}</Text>
+            <Ionicons name="location" size={16} color="#EF4444" style={{ marginRight: 6 }} />
+            <Text style={styles.badgeTextSecondary}>{product.distance || '2.4 km'}</Text>
           </View>
 
           <View style={styles.badgeSeparator} />
 
           <View style={styles.badgeItem}>
-            <Ionicons name="time" size={16} color="#0284C7" style={{ marginRight: 6 }} />
-            <Text style={styles.badgeTextSecondary}>{product.deliveryTime}</Text>
+            <Ionicons name="bicycle" size={18} color="#1B7D3C" style={{ marginRight: 6 }} />
+            <Text style={styles.badgeTextSecondary}>{(product.delivery_fee || 0) > 0 ? `$${Number(product.delivery_fee).toFixed(2)}` : 'Free'}</Text>
           </View>
         </Animated.View>
 
@@ -402,21 +430,50 @@ export default function ProductDetailsScreen() {
           </TouchableOpacity>
         </Animated.View>
 
+        {/* ── Recent Reviews Section ── */}
+        {reviews.length > 0 && (
+          <Animated.View style={{ marginTop: 24, paddingHorizontal: 20, paddingBottom: 100 }} entering={FadeInDown.duration(400).delay(250)}>
+            <Text style={{ fontSize: 18, fontWeight: "800", color: "#1A1A1A", marginBottom: 16 }}>Recent Reviews</Text>
+            {reviews.slice(0, 5).map(review => (
+              <View key={review.id} style={{ backgroundColor: "#F9FAFB", padding: 16, borderRadius: 12, marginBottom: 12 }}>
+                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <Text style={{ fontWeight: "600", color: "#1A1A1A" }}>{review.customer_name || "Customer"}</Text>
+                  <Text style={{ fontSize: 12, color: "#9CA3AF" }}>{new Date(review.created_at).toLocaleDateString()}</Text>
+                </View>
+                <View style={{ flexDirection: "row", marginBottom: 8 }}>
+                  {[...Array(5)].map((_, i) => (
+                    <Ionicons key={i} name={i < Math.floor(review.rating || review.food_rating || 5) ? "star" : "star-outline"} size={14} color="#F5A623" style={{ marginRight: 2 }} />
+                  ))}
+                </View>
+                <Text style={{ color: "#4B5563", fontSize: 14, lineHeight: 20 }}>
+                  {review.review_text || review.comment || "Great experience!"}
+                </Text>
+              </View>
+            ))}
+          </Animated.View>
+        )}
+
       </ScrollView>
 
       {/* FIXED BOTTOM ADD TO CART FOOTER */}
       <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: '#FFFFFF', paddingHorizontal: 20, paddingVertical: 16, borderTopWidth: 1, borderTopColor: '#F3F4F6', elevation: 10, shadowColor: '#000', shadowOffset: { width: 0, height: -3 }, shadowOpacity: 0.05, shadowRadius: 6, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
         <TouchableOpacity 
-          style={{ flex: 1, height: 52, backgroundColor: '#1B7D3C', borderRadius: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 }} 
+          style={{ flex: 1, height: 52, backgroundColor: product?.availability && product.availability !== "In Stock" ? '#D1D5DB' : '#1B7D3C', borderRadius: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 }} 
+          disabled={!!(product?.availability && product.availability !== "In Stock")}
           onPress={existingCartItem ? () => router.push({ pathname: "/cart", params: { returnTo: `/product/${product?.id}` } }) : handleAddToCart}
+          accessible={true}
+          accessibilityRole="button"
+          accessibilityLabel="Add to Cart"
         >
           <Ionicons name="cart-outline" size={22} color="#FFFFFF" />
           <Text style={{ color: '#FFFFFF', fontWeight: 'bold', fontSize: 16 }}>
-            {existingCartItem 
-              ? `View Cart (${totalItems}) • $${totalPrice.toFixed(2)}` 
-              : (product.variants && product.variants.length > 0 && !selectedVariant)
-                ? "Select Option"
-                : `Add ${(!product.variants || product.variants.length === 0) ? quantity : 1} to Cart • $${Number(calculatedTotal).toFixed(2)}`
+            {product?.availability && product.availability !== "In Stock"
+              ? "Out of Stock"
+              : existingCartItem 
+                ? `View Cart (${totalItems}) • $${totalPrice.toFixed(2)}` 
+                : (product.variants && product.variants.length > 0 && !selectedVariant)
+                  ? "Select Option"
+                  : `Add ${(!product.variants || product.variants.length === 0) ? quantity : 1} to Cart • $${Number(calculatedTotal).toFixed(2)}`
             }
           </Text>
         </TouchableOpacity>

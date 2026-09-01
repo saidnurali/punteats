@@ -19,11 +19,19 @@ import { useRouter, useLocalSearchParams } from "expo-router";
 import * as Location from 'expo-location';
 import { getStoredOrders, LiveOrder } from "@/lib/ordersStore";
 import { supabase } from "@/lib/supabase";
+import DriverChatModal from "@/components/DriverChatModal";
+import { GpsBanner } from "@/lib/GlobalErrorProvider";
 
 // Garowe Default Locations for Testing
-const GAROWE_RESTAURANT = { latitude: 8.4060, longitude: 48.4810 }; // Near Barxada
-const GAROWE_CUSTOMER = { latitude: 8.4005, longitude: 48.4850 };   // Destination
-const GAROWE_SCOOTER = { latitude: 8.4030, longitude: 48.4830 };    // Live Scooter
+const GAROWE_COORDINATES = {
+  latitude: 8.4064,
+  longitude: 48.4826,
+  latitudeDelta: 0.02,
+  longitudeDelta: 0.02,
+};
+const GAROWE_RESTAURANT = { latitude: GAROWE_COORDINATES.latitude, longitude: GAROWE_COORDINATES.longitude }; // Near Barxada
+const GAROWE_CUSTOMER = { latitude: GAROWE_COORDINATES.latitude - 0.005, longitude: GAROWE_COORDINATES.longitude + 0.002 };   // Destination
+const GAROWE_SCOOTER = { latitude: GAROWE_COORDINATES.latitude - 0.003, longitude: GAROWE_COORDINATES.longitude + 0.001 };    // Live Scooter
 
 const calculateHaversineKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
   const R = 6371; // Radius of Earth in KM
@@ -49,23 +57,77 @@ export default function OrderTrackingScreen() {
   const [loading, setLoading] = useState(!initialOrder);
   const [driverLocation, setDriverLocation] = useState<{latitude: number, longitude: number, heading: number} | null>(null);
   const [userLocation, setUserLocation] = useState<{latitude: number, longitude: number} | null>(null);
+  const [locationPermissionGranted, setLocationPermissionGranted] = useState<boolean | null>(null);
   const [distanceKm, setDistanceKm] = useState<number>(0);
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  const isChatOpenRef = useRef(false);
+  const [unreadCount, setUnreadCount] = useState(0);
   const mapRef = useRef<MapView>(null);
 
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
-  // Request actual GPS location from device/simulator
+  // Graceful Location Request
   useEffect(() => {
     (async () => {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') return;
-      const location = await Location.getCurrentPositionAsync({});
-      setUserLocation({
-        latitude: location.coords.latitude,
-        longitude: location.coords.longitude,
-      });
+      try {
+        // 1. Check existing permission status first (don't blindly request)
+        const { status: existingStatus } = await Location.getForegroundPermissionsAsync();
+        
+        if (existingStatus === 'granted') {
+          setLocationPermissionGranted(true);
+          const location = await Location.getCurrentPositionAsync({});
+          setUserLocation({
+            latitude: location.coords.latitude,
+            longitude: location.coords.longitude,
+          });
+        } else {
+          // If not granted, we degrade gracefully and don't show the user's blue dot.
+          // We let the map just show the driver's pin to avoid aggressive permission popups.
+          setLocationPermissionGranted(false);
+        }
+      } catch (err) {
+        console.warn("Location check failed:", err);
+        setLocationPermissionGranted(false);
+      }
     })();
   }, []);
+
+  const handleOpenChat = () => {
+    setIsChatOpen(true);
+    isChatOpenRef.current = true;
+    setUnreadCount(0);
+  };
+
+  const handleCloseChat = () => {
+    setIsChatOpen(false);
+    isChatOpenRef.current = false;
+  };
+
+  // Listen for unread chat messages
+  useEffect(() => {
+    if (!activeId) return;
+    const orderIdStr = String(activeId).replace(/^#+/, '');
+    
+    const channel = supabase
+      .channel(`badge_chat_${orderIdStr}`)
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'order_messages',
+        filter: `order_id=eq.${orderIdStr}`
+      }, (payload) => {
+        if (payload.new.sender_role !== 'customer') {
+          if (!isChatOpenRef.current) {
+            setUnreadCount(prev => prev + 1);
+          }
+        }
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [activeId]);
 
   useEffect(() => {
     Animated.loop(
@@ -91,7 +153,10 @@ export default function OrderTrackingScreen() {
       const isUUID = activeId.length === 36 && activeId.includes('-');
       const normalizedNumber = '#' + activeId.replace(/^#+/, '');
 
-      let query = supabase.from('orders').select('*');
+      let query = supabase
+        .from('orders')
+        .select('id, order_number, status, driver, driver_id, driver_latitude, driver_longitude, driver_heading, customer_name, customer_phone, items, total_price, delivery_address, restaurant_name, rejection_reason, created_at, user_id');
+        
       if (isUUID) {
         query = query.eq('id', activeId);
       } else {
@@ -114,8 +179,15 @@ export default function OrderTrackingScreen() {
     loadOrder();
 
     // Subscribe to realtime status changes
-    const channel = supabase.channel(`order_${activeId}`)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'orders' }, 
+    let channel: any = null;
+    if (activeId) {
+      const isUUID = activeId.length === 36 && activeId.includes('-');
+      const normalizedNumber = '#' + activeId.replace(/^#+/, '');
+      const filter = isUUID ? `id=eq.${activeId}` : `order_number=eq.${normalizedNumber}`;
+      
+      const channelName = `order_${activeId}_${Date.now()}`;
+      channel = supabase.channel(channelName)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'orders', filter }, 
         (payload) => {
           const newOrder = payload.new as any;
           const normalizedNumber = '#' + activeId.replace(/^#+/, '');
@@ -134,13 +206,18 @@ export default function OrderTrackingScreen() {
           }
         }
       ).subscribe();
+    }
 
-    return () => { supabase.removeChannel(channel); };
+    return () => {
+      if (channel) {
+        supabase.removeChannel(channel);
+      }
+    };
   }, [activeId]);
 
   const handleCallDriver = () => {
     const phone = order?.driver_phone || "+252907112233";
-    const driverName = order?.driver_name || "Mahad Jama (PuntGo Dispatch)";
+    const driverName = order?.driver_name || "PuntEats Dispatch";
     Alert.alert(
       "Calling Driver 📞",
       `Connecting to ${driverName} at ${phone}...`,
@@ -154,6 +231,50 @@ export default function OrderTrackingScreen() {
             }
           },
         },
+      ]
+    );
+  };
+
+  const handleCallSupport = () => {
+    Alert.alert(
+      "PuntEats Support 📞",
+      "Connecting to customer care...",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Call Now",
+          onPress: () => {
+            if (Platform.OS !== "web") {
+              Linking.openURL('tel:+252907123456').catch(() => {});
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleCancelOrder = () => {
+    Alert.alert(
+      "Cancel Order",
+      "Are you sure you want to cancel this order? This action cannot be undone.",
+      [
+        { text: "No", style: "cancel" },
+        {
+          text: "Yes, Cancel",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              const { error } = await supabase
+                .from('orders')
+                .update({ status: 'cancelled', cancellation_reason: 'Cancelled by customer' })
+                .eq('id', activeId);
+              if (error) throw error;
+              setOrder((prev: any) => ({ ...prev, status: 'cancelled', cancellation_reason: 'Cancelled by customer' }));
+            } catch (err: any) {
+              Alert.alert("Error", err.message || "Failed to cancel order.");
+            }
+          }
+        }
       ]
     );
   };
@@ -177,14 +298,22 @@ export default function OrderTrackingScreen() {
   let validUserLat = userLocation?.latitude;
   let validUserLng = userLocation?.longitude;
 
-  const destLat = Number(order?.delivery_lat || order?.delivery_latitude || validUserLat || GAROWE_CUSTOMER.latitude);
-  const destLng = Number(order?.delivery_lng || order?.delivery_longitude || validUserLng || GAROWE_CUSTOMER.longitude);
+  const parseCoord = (val1: any, val2: any, fallback: number) => {
+    const n = Number(val1 || val2);
+    return (!isNaN(n) && n !== 0) ? n : fallback;
+  };
+
+  const GAROWE_LAT = 8.4021;
+  const GAROWE_LNG = 48.4845;
+
+  const destLat = parseCoord(order?.delivery_lat, order?.delivery_latitude, validUserLat || GAROWE_LAT);
+  const destLng = parseCoord(order?.delivery_lng, order?.delivery_longitude, validUserLng || GAROWE_LNG);
   const destination = { latitude: destLat, longitude: destLng };
 
-  const restLat = Number(order?.restaurant_lat || order?.restaurant_latitude || GAROWE_RESTAURANT.latitude);
-  const restLng = Number(order?.restaurant_lng || order?.restaurant_longitude || GAROWE_RESTAURANT.longitude);
+  const restLat = parseCoord(order?.restaurant_lat, order?.restaurant_latitude, GAROWE_LAT);
+  const restLng = parseCoord(order?.restaurant_lng, order?.restaurant_longitude, GAROWE_LNG);
 
-  const liveDriver = driverLocation || { ...GAROWE_SCOOTER, heading: 45 };
+  const liveDriver = driverLocation || null;
 
   // Safely parse JSON items (MUST BE ABOVE EARLY RETURNS TO OBEY RULES OF HOOKS)
   const parsedItems = React.useMemo(() => {
@@ -209,7 +338,7 @@ export default function OrderTrackingScreen() {
   }, [order]);
 
   useEffect(() => {
-    if (order) {
+    if (order && liveDriver) {
       const km = calculateHaversineKm(liveDriver.latitude, liveDriver.longitude, destLat, destLng);
       setDistanceKm(km);
 
@@ -226,8 +355,29 @@ export default function OrderTrackingScreen() {
           animated: true
         }
       );
+    } else if (order) {
+      // Just fit to customer and restaurant if no driver
+      const coordinatesToFit = [
+        { latitude: destLat, longitude: destLng },
+        { latitude: restLat, longitude: restLng }
+      ];
+      mapRef.current?.fitToCoordinates(
+        coordinatesToFit,
+        {
+          edgePadding: { top: 60, right: 60, bottom: 60, left: 60 },
+          animated: true
+        }
+      );
     }
   }, [driverLocation, order]);
+
+  // Define displayOrderId consistently
+  const displayId = activeId || "PG123456";
+  let displayOrderId = order?.order_number || displayId;
+  if (!displayOrderId.startsWith('#')) {
+    displayOrderId = '#' + displayOrderId;
+  }
+  displayOrderId = displayOrderId.replace(/^#+/, '#'); 
 
   // 🚨 IF DATA IS MISSING AND STILL LOADING:
   if (loading && !order) {
@@ -235,8 +385,7 @@ export default function OrderTrackingScreen() {
       <SafeAreaView style={{ flex: 1, backgroundColor: '#F9FAFB', justifyContent: 'center', alignItems: 'center' }} edges={['top']}>
         <View style={styles.header}>
           <TouchableOpacity style={styles.backBtn} onPress={() => {
-            if (router.canGoBack()) router.back();
-            else router.replace('/(tabs)/orders');
+            router.replace('/(tabs)');
           }}>
             <Ionicons name="arrow-back" size={24} color="#1A1A1A" />
           </TouchableOpacity>
@@ -251,13 +400,13 @@ export default function OrderTrackingScreen() {
   }
 
   // 🚨 IF ORDER IS CANCELLED / REJECTED:
+  let subtotal = order?.total_price || 0;
   if (order?.status?.toLowerCase() === 'cancelled' || order?.status?.toLowerCase() === 'rejected') {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: '#F9FAFB' }} edges={['top']}>
         <View style={styles.header}>
           <TouchableOpacity style={styles.backBtn} onPress={() => {
-            if (router.canGoBack()) router.back();
-            else router.replace('/(tabs)/orders');
+            router.replace('/(tabs)');
           }}>
             <Ionicons name="arrow-back" size={24} color="#1A1A1A" />
           </TouchableOpacity>
@@ -304,22 +453,15 @@ export default function OrderTrackingScreen() {
     );
   }
 
-  const fallbackId = activeId || "PG123456";
-  let displayOrderId = order?.order_number || fallbackId;
-  // Ensure it starts with exactly one #
-  if (!displayOrderId.startsWith('#')) {
-    displayOrderId = '#' + displayOrderId;
-  }
-  displayOrderId = displayOrderId.replace(/^#+/, '#'); // Fixes ##PG123456 issue
+
 
   // 🚨 IF ORDER IS DELIVERED:
   if (order?.status?.toLowerCase() === 'delivered' || order?.status?.toLowerCase() === 'completed') {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: '#F9FAFB' }} edges={['top']}>
         <View style={styles.header}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => {
-            if (router.canGoBack()) router.back();
-            else router.replace('/(tabs)/orders');
+          <TouchableOpacity style={styles.headerBtn} onPress={() => {
+            router.replace('/(tabs)');
           }}>
             <Ionicons name="arrow-back" size={24} color="#1A1A1A" />
           </TouchableOpacity>
@@ -335,7 +477,7 @@ export default function OrderTrackingScreen() {
             </View>
             <Text style={{ fontSize: 26, fontWeight: '900', color: '#064E3B', marginBottom: 8 }}>Order Delivered!</Text>
             <Text style={{ fontSize: 15, color: '#6B7280', textAlign: 'center' }}>
-              Your food from {order?.restaurant_name || order?.restaurant || 'PuntEats'} was delivered successfully.
+              Your food from {order?.restaurant_name || order?.restaurant || 'the restaurant'} was delivered successfully.
             </Text>
           </View>
 
@@ -357,14 +499,12 @@ export default function OrderTrackingScreen() {
             <View style={{ marginBottom: 20 }}>
               {parsedItems.length > 0 ? (
                 parsedItems.map((item: any, idx: number) => (
-                  <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
-                    {item.image ? (
-                      <Image source={{ uri: item.image }} style={{ width: 50, height: 50, borderRadius: 8, backgroundColor: '#F3F4F6' }} />
-                    ) : (
-                      <View style={{ width: 50, height: 50, borderRadius: 8, backgroundColor: '#F3F4F6', justifyContent: 'center', alignItems: 'center' }}>
-                        <Ionicons name="fast-food" size={24} color="#9CA3AF" />
-                      </View>
-                    )}
+                  <View key={`receipt-${item.id || item.name}-${idx}`} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
+                    <Image 
+                      source={{ uri: item.image || item.image_url || 'https://via.placeholder.com/150' }} 
+                      style={{ width: 50, height: 50, borderRadius: 8, backgroundColor: '#F3F4F6' }} 
+                      resizeMode="cover" 
+                    />
                     <View style={{ flex: 1, marginLeft: 12 }}>
                       <Text style={{ fontSize: 15, fontWeight: '700', color: '#111827', textTransform: 'capitalize' }} numberOfLines={1}>
                         {item.name}
@@ -415,11 +555,7 @@ export default function OrderTrackingScreen() {
           style={styles.backBtn}
           activeOpacity={0.7}
           onPress={() => {
-            if (router.canGoBack()) {
-              router.back();
-            } else {
-              router.replace("/(tabs)/orders");
-            }
+            router.replace("/(tabs)/orders");
           }}
           hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
         >
@@ -427,11 +563,25 @@ export default function OrderTrackingScreen() {
         </TouchableOpacity>
 
         <Text style={styles.headerTitle}>Order Tracking</Text>
-
-        <View style={styles.headerRightPlaceholder} />
+        <View style={{ width: 44 }} />
       </View>
 
-      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      {locationPermissionGranted === false && (
+        <GpsBanner onPress={() => Linking.openSettings()} />
+      )}
+
+      <ScrollView 
+        style={styles.scrollView} 
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
+            {order?.status?.toLowerCase() === 'cancelled' && (
+              <View style={styles.cancelledBanner}>
+                <Text style={styles.cancelledBannerText}>
+                  ❌ Order Cancelled: {order?.cancellation_reason || 'Restaurant or Driver unable to fulfill'}
+                </Text>
+              </View>
+            )}
 
             {/* 2. CARD TOP: Restaurant, Order Number, Estimated Arrival */}
             <View style={styles.topCard}>
@@ -444,7 +594,9 @@ export default function OrderTrackingScreen() {
                     Order {displayOrderId}
                   </Text>
                   <Text style={styles.restaurantName}>
-                    {order?.restaurant_name || "Pizza House"}
+                    {order?.restaurant_name === 'PuntEats Restaurant' || order?.restaurant_name === 'PuntEats Partner' 
+                      ? 'Restaurant' 
+                      : (order?.restaurant_name || "Pizza House")}
                   </Text>
                 </View>
               </View>
@@ -569,26 +721,30 @@ export default function OrderTrackingScreen() {
                 </Marker>
 
                 {/* 3. LIVE DRIVER SCOOTER MARKER */}
-                <Marker
-                  coordinate={{ latitude: liveDriver.latitude, longitude: liveDriver.longitude }}
-                  anchor={{ x: 0.5, y: 0.5 }}
-                  rotation={liveDriver.heading}
-                  title={order?.driver_name || "Driver"}
-                >
-                  <View style={styles.scooterPin}>
-                    <Ionicons color="#1B7D3C" name="bicycle" size={24} />
-                  </View>
-                </Marker>
+                {liveDriver && (
+                  <Marker
+                    coordinate={{ latitude: liveDriver.latitude, longitude: liveDriver.longitude }}
+                    anchor={{ x: 0.5, y: 0.5 }}
+                    rotation={liveDriver.heading}
+                    title={order?.driver_name || "Driver"}
+                  >
+                    <View style={styles.scooterPin}>
+                      <Ionicons color="#1B7D3C" name="bicycle" size={24} />
+                    </View>
+                  </Marker>
+                )}
 
                 {/* REALTIME POLYLINE ROUTE FROM DRIVER TO DESTINATION */}
-                <Polyline
-                  coordinates={[
-                    { latitude: liveDriver.latitude, longitude: liveDriver.longitude },
-                    { latitude: destLat, longitude: destLng }
-                  ]}
-                  strokeColor="#1B7D3C"
-                  strokeWidth={4}
-                />
+                {liveDriver && (
+                  <Polyline
+                    coordinates={[
+                      { latitude: liveDriver.latitude, longitude: liveDriver.longitude },
+                      { latitude: destLat, longitude: destLng }
+                    ]}
+                    strokeColor="#1B7D3C"
+                    strokeWidth={4}
+                  />
+                )}
               </MapView>
 
               {/* FLOATING LIVE KM CARD */}
@@ -605,18 +761,42 @@ export default function OrderTrackingScreen() {
 
             {/* 5. BOTTOM ACTION BAR: Contact Driver & Call */}
             <View style={styles.bottomActionBar}>
-              <TouchableOpacity style={styles.contactDriverPill} activeOpacity={0.85} onPress={handleCallDriver}>
-                <Ionicons name="call" size={20} color="#1A1A1A" style={{ marginRight: 10 }} />
-                <Text style={styles.contactDriverText}>Contact Driver</Text>
+              <TouchableOpacity style={styles.chatDriverPill} activeOpacity={0.85} onPress={handleOpenChat}>
+                <Ionicons name="chatbubble" size={20} color="#FFFFFF" style={{ marginRight: 10 }} />
+                <Text style={styles.chatDriverText}>Chat with Driver</Text>
+                {unreadCount > 0 && (
+                  <View style={styles.redBadge}>
+                    <Text style={styles.badgeText}>{unreadCount}</Text>
+                  </View>
+                )}
               </TouchableOpacity>
 
               <TouchableOpacity style={styles.callCircleBtn} activeOpacity={0.85} onPress={handleCallDriver}>
                 <Ionicons name="call" size={22} color="#1A1A1A" />
               </TouchableOpacity>
+
+              <TouchableOpacity style={[styles.callCircleBtn, { backgroundColor: '#FEE2E2', borderColor: '#FECACA' }]} activeOpacity={0.85} onPress={handleCallSupport}>
+                <Ionicons name="help-buoy" size={22} color="#DC2626" />
+              </TouchableOpacity>
             </View>
+
+            {order?.status?.toLowerCase() === 'pending' && (
+              <TouchableOpacity style={styles.cancelOrderBtn} activeOpacity={0.8} onPress={handleCancelOrder}>
+                <Text style={styles.cancelOrderText}>Cancel Order</Text>
+              </TouchableOpacity>
+            )}
 
             <View style={{ height: 40 }} />
       </ScrollView>
+
+      {/* DRIVER CHAT MODAL */}
+      <DriverChatModal
+        visible={isChatOpen}
+        onClose={handleCloseChat}
+        orderId={(activeId as string)?.replace(/^#+/, '')}
+        customerName={order?.customer_name || 'Customer'}
+        driverName={order?.driver_name || 'Driver'}
+      />
     </SafeAreaView>
   );
 }
@@ -638,13 +818,32 @@ const styles = StyleSheet.create({
     width: 44,
     justifyContent: "center",
   },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#1A1A1A",
+  },
+  cancelledBanner: {
+    backgroundColor: '#FEE2E2',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    padding: 14,
+    borderRadius: 12,
+    marginBottom: 16,
+  },
+  cancelledBannerText: {
+    color: '#991B1B',
+    fontSize: 14,
+    fontWeight: '600',
+    lineHeight: 20,
+  },
+  headerRightPlaceholder: {
+    width: 44,
+  },
   headerTitle: {
     fontSize: 20,
     fontWeight: "800",
     color: "#1A1A1A",
-  },
-  headerRightPlaceholder: {
-    width: 44,
   },
   scrollView: {
     flex: 1,
@@ -878,32 +1077,63 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.15,
     shadowRadius: 6,
     elevation: 5,
+    borderTopLeftRadius: 30,
+    borderTopRightRadius: 30,
+  },
+  cancelOrderBtn: {
+    marginHorizontal: 16,
+    marginTop: 16,
+    backgroundColor: '#FEE2E2',
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  },
+  cancelOrderText: {
+    color: '#DC2626',
+    fontWeight: '700',
+    fontSize: 16,
   },
   bottomActionBar: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
   },
-  contactDriverPill: {
+  chatDriverPill: {
     flex: 1,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: "#1B7D3C",
     borderRadius: 28,
-    borderWidth: 1,
-    borderColor: "#E2E8F0",
     paddingVertical: 14,
     paddingHorizontal: 20,
     flexDirection: "row",
     alignItems: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
+    justifyContent: "center",
+    shadowColor: "#1B7D3C",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
     shadowRadius: 8,
-    elevation: 2,
+    elevation: 4,
   },
-  contactDriverText: {
+  chatDriverText: {
     fontSize: 16,
-    fontWeight: "700",
-    color: "#1A1A1A",
+    fontWeight: "800",
+    color: "#FFFFFF",
+  },
+  redBadge: {
+    backgroundColor: '#EF4444',
+    borderRadius: 12,
+    minWidth: 20,
+    height: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 8,
+    paddingHorizontal: 6,
+  },
+  badgeText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: 'bold',
   },
   callCircleBtn: {
     width: 52,

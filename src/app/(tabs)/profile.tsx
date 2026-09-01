@@ -12,20 +12,27 @@ import {
   TextInput,
   Platform,
   StatusBar,
+  DeviceEventEmitter,
+  ActivityIndicator,
+  Linking,
 } from "react-native";
 import { Image } from "expo-image";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { supabase } from "../../lib/supabase";
-import { useCart } from "../../lib/CartContext";
+import { useCart } from "@/lib/CartContext";
+import { clearStoredOrders } from "@/lib/ordersStore";
+import { useLanguage } from "../../lib/LanguageContext";
 import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
 
 export default function ProfileScreen() {
   const router = useRouter();
   const { clearCart } = useCart();
+  const { t, lang, setLang } = useLanguage();
 
   // ── Profile State ──
+  const [userId, setUserId] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
@@ -36,6 +43,7 @@ export default function ProfileScreen() {
     AsyncStorage.getItem('puntgo_user_session').then((stored) => {
       if (stored) {
         const p = JSON.parse(stored);
+        setUserId(p.id || null);
         setDisplayName(p.full_name || "Customer");
         setPhone(p.phone_number || "+252");
         setEmail(p.email || "No email linked");
@@ -44,20 +52,22 @@ export default function ProfileScreen() {
         // Fallback for demo
         setDisplayName("Garowe User");
         setPhone("+252 90 7123456");
-        setEmail("garowe.user@puntgo.so");
+        setEmail("garowe.user@punteats.so");
       }
     });
   }, []);
 
   // ── Settings State ──
   const [pushNotifications, setPushNotifications] = useState(true);
-  const [language, setLanguage] = useState<"English" | "Soomaali">("English");
 
   // ── Modals State ──
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [tempName, setTempName] = useState(displayName);
   const [tempPhone, setTempPhone] = useState(phone);
   const [tempEmail, setTempEmail] = useState(email);
+
+
+  // Old addresses state and effect removed
 
   // ── Handlers ──
   const handleOpenEditModal = () => {
@@ -69,23 +79,28 @@ export default function ProfileScreen() {
 
   const handleSaveProfile = () => {
     if (!tempName.trim() || !tempPhone.trim()) {
-      Alert.alert("Required Fields", "Please enter your full name and +252 phone number.");
+      Alert.alert(t("error"), "Please enter your full name and +252 phone number.");
       return;
     }
     setDisplayName(tempName.trim());
     setPhone(tempPhone.trim());
     setEmail(tempEmail.trim());
-    
-    // Save to AsyncStorage
-    AsyncStorage.setItem("@puntgo_user_profile", JSON.stringify({
-      displayName: tempName.trim(),
-      phone: tempPhone.trim(),
-      email: tempEmail.trim(),
-      avatarUri,
-    }));
+
+    // Save back to the SAME key we load from — was saving to '@puntgo_user_profile'
+    // but loading from 'puntgo_user_session', so every edit was silently lost on restart.
+    AsyncStorage.getItem('puntgo_user_session').then(stored => {
+      const existing = stored ? JSON.parse(stored) : {};
+      AsyncStorage.setItem('puntgo_user_session', JSON.stringify({
+        ...existing,
+        full_name: tempName.trim(),
+        phone_number: tempPhone.trim(),
+        email: tempEmail.trim(),
+        avatar_url: avatarUri || existing.avatar_url,
+      }));
+    }).catch(() => {});
 
     setEditModalVisible(false);
-    Alert.alert("Profile Updated ✓", "Your personal information has been saved successfully.");
+    Alert.alert(t("profile_updated"), t("profile_saved"));
   };
 
   const handleAvatarPress = () => {
@@ -122,43 +137,51 @@ export default function ProfileScreen() {
 
   const handleLanguageSelect = () => {
     Alert.alert(
-      "Select Language / Dooro Luqadda",
-      "Choose your preferred app language:",
+      t("select_language"),
+      t("choose_language"),
       [
-        { text: "Cancel", style: "cancel" },
+        { text: t("cancel"), style: "cancel" },
         {
-          text: "English (US)",
-          onPress: () => setLanguage("English"),
+          text: t("english"),
+          onPress: () => setLang("en"),
         },
         {
-          text: "Soomaali (Somali)",
-          onPress: () => setLanguage("Soomaali"),
+          text: t("somali"),
+          onPress: () => setLang("so"),
         },
       ]
     );
   };
 
-  const handleSavedAddresses = () => {
-    Alert.alert(
-      "Saved Delivery Addresses 📍",
-      "• Home: Shaqaalaha Road, Garowe, Puntland\n• Work: Ministry Road, Garowe\n\nYou can add or manage addresses during Checkout.",
-      [{ text: "Got It", style: "default" }]
-    );
+
+
+  const handlePrivacyPolicy = () => {
+    Linking.openURL('https://punteats.so/privacy').catch(() => {
+      Alert.alert("Error", "Could not open Privacy Policy.");
+    });
   };
 
-  const handlePrivacySecurity = () => {
-    Alert.alert(
-      "Privacy & Security 🛡️",
-      "Manage your PIN, biometrics, and account security. Active 2-Step verification is enabled for +252 numbers.",
-      [{ text: "Close", style: "default" }]
-    );
+  const handleTermsOfService = () => {
+    Linking.openURL('https://punteats.so/terms').catch(() => {
+      Alert.alert("Error", "Could not open Terms of Service.");
+    });
   };
 
-  const handleTermsSupport = () => {
+  const handleSupport = () => {
     Alert.alert(
-      "PuntGo Support & Terms 📄",
-      "Need help with your order or taxi ride in Garowe?\n\n• Customer Care: +252 90 7123456\n• Email: support@puntgo.so\n• Version: v1.0.0 (Garowe Release)",
-      [{ text: "OK", style: "default" }]
+      "PuntEats Support 📞",
+      "Need help with your order or parcel delivery in Garowe?\n\n• Customer Care: +252 90 7123456\n• Email: support@punteats.so\n• Version: v1.0.0",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Call Support",
+          onPress: () => {
+            if (Platform.OS !== "web") {
+              Linking.openURL('tel:+252907123456').catch(() => {});
+            }
+          },
+        }
+      ]
     );
   };
 
@@ -166,37 +189,56 @@ export default function ProfileScreen() {
     try {
       (global as any).__BYPASS_AUTH__ = false;
       await AsyncStorage.removeItem('puntgo_user_session');
+      await AsyncStorage.removeItem('@puntgo_cart_v2'); // Forcefully clear cart memory immediately
+      await clearStoredOrders();
       await supabase.auth.signOut();
       clearCart();
+      DeviceEventEmitter.emit('AUTH_STATE_CHANGED', false);
+      if (router.canDismiss()) router.dismissAll();
       router.replace("/(home)/login");
     } catch {
+      await AsyncStorage.removeItem('@puntgo_cart_v2');
+      await clearStoredOrders();
       clearCart();
+      DeviceEventEmitter.emit('AUTH_STATE_CHANGED', false);
+      if (router.canDismiss()) router.dismissAll();
       router.replace("/(home)/login");
     }
   };
 
   const handleDeleteAccount = () => {
     Alert.alert(
-      "Delete PuntGo Account?",
-      "Warning: This action is permanent. All your order history, delivery addresses, and profile data will be completely deleted.",
+      t("delete_confirm_title"),
+      t("delete_confirm_msg"),
       [
         {
-          text: "Cancel",
+          text: t("cancel"),
           style: "cancel",
         },
         {
-          text: "Yes, Delete Everything",
+          text: t("yes_delete"),
           style: "destructive",
           onPress: async () => {
             try {
+              const { data, error } = await supabase.functions.invoke('delete-user-account');
+
+              if (error) {
+                console.error("Account deletion error:", error);
+                Alert.alert("Error", "Failed to delete account. Please try again or contact support.");
+                return;
+              }
+
+              // Proceed with local cleanup only after successful server deletion
               (global as any).__BYPASS_AUTH__ = false;
               await AsyncStorage.removeItem('puntgo_user_session');
               await supabase.auth.signOut();
               clearCart();
+              DeviceEventEmitter.emit('AUTH_STATE_CHANGED', false);
+              if (router.canDismiss()) router.dismissAll();
               router.replace("/(home)/login");
-            } catch {
-              clearCart();
-              router.replace("/(home)/login");
+            } catch (err) {
+              console.error("Account deletion crash:", err);
+              Alert.alert("Error", "An unexpected error occurred while deleting your account.");
             }
           },
         },
@@ -211,7 +253,7 @@ export default function ProfileScreen() {
 
       {/* TOP HEADER */}
       <View style={styles.headerBar}>
-        <Text style={styles.headerTitle}>My Profile</Text>
+        <Text style={styles.headerTitle}>{t("my_profile")}</Text>
       </View>
 
       <ScrollView
@@ -247,25 +289,25 @@ export default function ProfileScreen() {
             onPress={handleOpenEditModal}
           >
             <Ionicons name="create-outline" size={16} color="#1B7D3C" style={{ marginRight: 6 }} />
-            <Text style={styles.quickEditBtnText}>Edit Profile</Text>
+            <Text style={styles.quickEditBtnText}>{t("edit_profile")}</Text>
           </TouchableOpacity>
         </View>
 
         {/* 2. ACCOUNT MANAGEMENT & OPTIONS LIST */}
-        <Text style={styles.sectionTitle}>Account Settings</Text>
+        <Text style={styles.sectionTitle}>{t("account_settings")}</Text>
 
         <View style={styles.menuListCard}>
           {/* Saved Delivery Addresses */}
           <TouchableOpacity
             style={styles.menuRow}
             activeOpacity={0.7}
-            onPress={handleSavedAddresses}
+            onPress={() => router.push("/saved-addresses")}
           >
             <View style={styles.menuRowLeft}>
               <View style={[styles.menuIconBox, { backgroundColor: "#EFFDF4" }]}>
                 <Ionicons name="location-outline" size={22} color="#1B7D3C" />
               </View>
-              <Text style={styles.menuRowLabel}>Saved Delivery Addresses</Text>
+              <Text style={styles.menuRowLabel}>{t("saved_addresses")}</Text>
             </View>
             <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
           </TouchableOpacity>
@@ -279,8 +321,8 @@ export default function ProfileScreen() {
                 <Ionicons name="notifications-outline" size={22} color="#F5A623" />
               </View>
               <View>
-                <Text style={styles.menuRowLabel}>Notifications</Text>
-                <Text style={styles.menuRowSub}>Order alerts & status updates</Text>
+                <Text style={styles.menuRowLabel}>{t("notifications")}</Text>
+                <Text style={styles.menuRowSub}>{t("order_alerts")}</Text>
               </View>
             </View>
             <Switch
@@ -290,6 +332,77 @@ export default function ProfileScreen() {
               thumbColor={Platform.OS === "ios" ? "#FFFFFF" : pushNotifications ? "#FFFFFF" : "#F3F4F6"}
             />
           </View>
+
+          <View style={styles.rowDivider} />
+
+          {/* Saved Addresses */}
+          <TouchableOpacity
+            style={styles.menuRow}
+            activeOpacity={0.7}
+            onPress={() => router.push("/saved-addresses" as any)}
+          >
+            <View style={styles.menuRowLeft}>
+              <View style={[styles.menuIconBox, { backgroundColor: "#FEF2F2" }]}>
+                <Ionicons name="location-outline" size={22} color="#EF4444" />
+              </View>
+              <Text style={styles.menuRowLabel}>Saved Delivery Addresses</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
+          </TouchableOpacity>
+
+          <View style={styles.rowDivider} />
+
+          {/* Parcel Deliveries */}
+          <TouchableOpacity
+            style={styles.menuRow}
+            activeOpacity={0.7}
+            onPress={() => router.push("/parcel/history" as any)}
+          >
+            <View style={styles.menuRowLeft}>
+              <View style={[styles.menuIconBox, { backgroundColor: "#FFF7ED" }]}>
+                <Ionicons name="cube-outline" size={22} color="#F5A623" />
+              </View>
+              <Text style={styles.menuRowLabel}>Parcel Deliveries</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
+          </TouchableOpacity>
+
+          <View style={styles.rowDivider} />
+
+          {/* PuntGo Rewards (Loyalty) */}
+          <TouchableOpacity
+            style={styles.menuRow}
+            activeOpacity={0.7}
+            onPress={() => Alert.alert("PuntGo Rewards", "You have 450 points! (Mock)")}
+          >
+            <View style={styles.menuRowLeft}>
+              <View style={[styles.menuIconBox, { backgroundColor: "#FEF9C3" }]}>
+                <Ionicons name="star" size={22} color="#EAB308" />
+              </View>
+              <View>
+                <Text style={styles.menuRowLabel}>PuntGo Rewards</Text>
+                <Text style={styles.menuRowSub}>450 Points available</Text>
+              </View>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
+          </TouchableOpacity>
+
+          <View style={styles.rowDivider} />
+
+          {/* Refer & Earn */}
+          <TouchableOpacity
+            style={styles.menuRow}
+            activeOpacity={0.7}
+            onPress={() => Alert.alert("Refer & Earn", "Share your code: PUNTGO25")}
+          >
+            <View style={styles.menuRowLeft}>
+              <View style={[styles.menuIconBox, { backgroundColor: "#ECFEFF" }]}>
+                <Ionicons name="gift-outline" size={22} color="#06B6D4" />
+              </View>
+              <Text style={styles.menuRowLabel}>Refer & Earn</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
+          </TouchableOpacity>
 
           <View style={styles.rowDivider} />
 
@@ -303,44 +416,61 @@ export default function ProfileScreen() {
               <View style={[styles.menuIconBox, { backgroundColor: "#EFF6FF" }]}>
                 <Ionicons name="globe-outline" size={22} color="#3B82F6" />
               </View>
-              <Text style={styles.menuRowLabel}>Language Preference</Text>
+              <Text style={styles.menuRowLabel}>{t("language_preference")}</Text>
             </View>
             <View style={styles.menuRowRight}>
-              <Text style={styles.languageBadgeText}>{language}</Text>
+              <Text style={styles.languageBadgeText}>{lang === "so" ? "Soomaali" : "English"}</Text>
               <Ionicons name="chevron-forward" size={18} color="#9CA3AF" style={{ marginLeft: 6 }} />
             </View>
           </TouchableOpacity>
 
           <View style={styles.rowDivider} />
 
-          {/* Privacy & Security */}
+          {/* Privacy Policy */}
           <TouchableOpacity
             style={styles.menuRow}
             activeOpacity={0.7}
-            onPress={handlePrivacySecurity}
+            onPress={handlePrivacyPolicy}
           >
             <View style={styles.menuRowLeft}>
               <View style={[styles.menuIconBox, { backgroundColor: "#F3E8FF" }]}>
                 <Ionicons name="shield-checkmark-outline" size={22} color="#9333EA" />
               </View>
-              <Text style={styles.menuRowLabel}>Privacy & Security</Text>
+              <Text style={styles.menuRowLabel}>Privacy Policy</Text>
             </View>
             <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
           </TouchableOpacity>
 
           <View style={styles.rowDivider} />
 
-          {/* Terms & Support */}
+          {/* Terms of Service */}
           <TouchableOpacity
             style={styles.menuRow}
             activeOpacity={0.7}
-            onPress={handleTermsSupport}
+            onPress={handleTermsOfService}
           >
             <View style={styles.menuRowLeft}>
               <View style={[styles.menuIconBox, { backgroundColor: "#F1F5F9" }]}>
                 <Ionicons name="document-text-outline" size={22} color="#475569" />
               </View>
-              <Text style={styles.menuRowLabel}>Terms & Support</Text>
+              <Text style={styles.menuRowLabel}>Terms of Service</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
+          </TouchableOpacity>
+
+          <View style={styles.rowDivider} />
+
+          {/* Customer Support */}
+          <TouchableOpacity
+            style={styles.menuRow}
+            activeOpacity={0.7}
+            onPress={handleSupport}
+          >
+            <View style={styles.menuRowLeft}>
+              <View style={[styles.menuIconBox, { backgroundColor: "#F0FDF4" }]}>
+                <Ionicons name="help-circle-outline" size={22} color="#1B7D3C" />
+              </View>
+              <Text style={styles.menuRowLabel}>Customer Support</Text>
             </View>
             <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
           </TouchableOpacity>
@@ -353,7 +483,7 @@ export default function ProfileScreen() {
           onPress={handleLogout}
         >
           <Ionicons name="log-out-outline" size={22} color="#EF4444" style={{ marginRight: 10 }} />
-          <Text style={styles.logoutBtnText}>Log Out</Text>
+          <Text style={styles.logoutBtnText}>{t("log_out")}</Text>
         </TouchableOpacity>
 
         {/* 4. DELETE ACCOUNT (DANGER ZONE) */}
@@ -364,79 +494,46 @@ export default function ProfileScreen() {
             onPress={handleDeleteAccount}
           >
             <Ionicons name="trash-outline" size={19} color="#DC2626" style={{ marginRight: 8 }} />
-            <Text style={styles.deleteAccountBtnText}>Delete Account</Text>
+            <Text style={styles.deleteAccountBtnText}>{t("delete_account")}</Text>
           </TouchableOpacity>
         </View>
 
-        <Text style={styles.footerVersionText}>PuntGo v1.0.0 • Garowe, Puntland</Text>
+        <Text style={styles.footerVersionText}>{t("version")}</Text>
         <View style={{ height: 40 }} />
       </ScrollView>
 
-      {/* ── MODAL: EDIT PROFILE ── */}
-      <Modal
-        visible={editModalVisible}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setEditModalVisible(false)}
-      >
+      <Modal visible={editModalVisible} animationType="slide" transparent={true} onRequestClose={() => setEditModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Edit Profile Info</Text>
-              <TouchableOpacity onPress={() => setEditModalVisible(false)}>
-                <Ionicons name="close" size={24} color="#6B6B6B" />
+              <Text style={styles.modalTitle}>{t("edit_profile")}</Text>
+              <TouchableOpacity onPress={() => setEditModalVisible(false)} hitSlop={{top:10,bottom:10,left:10,right:10}}>
+                <Ionicons name="close" size={24} color="#6B7280" />
               </TouchableOpacity>
             </View>
 
-            <Text style={styles.inputLabel}>Full Name</Text>
-            <TextInput
-              style={styles.textInput}
-              value={tempName}
-              onChangeText={setTempName}
-              placeholder="Enter full name"
-              placeholderTextColor="#9CA3AF"
-            />
+            <Text style={styles.inputLabel}>{t("full_name")}</Text>
+            <TextInput style={styles.textInput} value={tempName} onChangeText={setTempName} placeholder="E.g. Ali Ahmed" placeholderTextColor="#9CA3AF" />
 
-            <Text style={styles.inputLabel}>Phone Number (+252)</Text>
-            <TextInput
-              style={styles.textInput}
-              value={tempPhone}
-              onChangeText={setTempPhone}
-              placeholder="+252 90 7123456"
-              placeholderTextColor="#9CA3AF"
-              keyboardType="phone-pad"
-            />
+            <Text style={styles.inputLabel}>{t("phone_number")}</Text>
+            <TextInput style={styles.textInput} value={tempPhone} onChangeText={setTempPhone} placeholder="+252 90 7000000" keyboardType="phone-pad" placeholderTextColor="#9CA3AF" />
 
-            <Text style={styles.inputLabel}>Email Address</Text>
-            <TextInput
-              style={styles.textInput}
-              value={tempEmail}
-              onChangeText={setTempEmail}
-              placeholder="garowe.user@puntgo.so"
-              placeholderTextColor="#9CA3AF"
-              keyboardType="email-address"
-              autoCapitalize="none"
-            />
+            <Text style={styles.inputLabel}>{t("email_address")}</Text>
+            <TextInput style={styles.textInput} value={tempEmail} onChangeText={setTempEmail} placeholder="ali@example.com" keyboardType="email-address" autoCapitalize="none" placeholderTextColor="#9CA3AF" />
 
             <View style={styles.modalActionsRow}>
-              <TouchableOpacity
-                style={styles.modalCancelBtn}
-                activeOpacity={0.8}
-                onPress={() => setEditModalVisible(false)}
-              >
-                <Text style={styles.modalCancelBtnText}>Cancel</Text>
+              <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setEditModalVisible(false)}>
+                <Text style={styles.modalCancelBtnText}>{t("cancel")}</Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.modalSaveBtn}
-                activeOpacity={0.88}
-                onPress={handleSaveProfile}
-              >
-                <Text style={styles.modalSaveBtnText}>Save Changes</Text>
+              <TouchableOpacity style={styles.modalSaveBtn} onPress={handleSaveProfile}>
+                <Text style={styles.modalSaveBtnText}>{t("save_changes")}</Text>
               </TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
+
+      {/* Address manager moved to saved-addresses.tsx */}
     </SafeAreaView>
     </Animated.View>
   );

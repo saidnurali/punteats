@@ -1,0 +1,7 @@
+supabase-go
+*.tar.gz
+design/
+.git/
+ios/
+.expo/
+node_modules/

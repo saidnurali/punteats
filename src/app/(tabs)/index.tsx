@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -12,21 +12,25 @@ import {
   Platform,
   StatusBar,
   Modal,
+  Alert,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+
 import { Image } from "expo-image";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import Animated, { FadeInDown, FadeInRight, FadeIn } from "react-native-reanimated";
-import { useRouter } from "expo-router";
-import { PRODUCTS_DATA, Product, fetchProductsFromSupabase, mapFoodItemToProduct } from "@/lib/products";
-import { supabase } from "@/lib/supabase";
+import { useRouter, useFocusEffect } from "expo-router";
+import { Product } from "@/lib/products";
 import { useCart } from "@/lib/CartContext";
+import { useNotifications } from "@/lib/NotificationContext";
 import { useWishlist } from "@/lib/WishlistContext";
+import { useLanguage } from "@/lib/LanguageContext";
 import { RestaurantCard } from "@/components/RestaurantCard";
 import { CATEGORIES, coffeeTeaIcon } from "@/lib/categoriesData";
 import { CategorySkeleton, FoodCardSkeleton, RestaurantSkeleton } from "@/components/SkeletonLoader";
-import { getCachedRestaurants, fetchRestaurants } from "@/lib/DataCache";
+import { getCachedRestaurants, fetchRestaurants, fetchAllProducts, getCachedAllProducts } from "@/lib/DataCache";
+import { supabase } from "@/lib/supabase";
 
 const { width } = Dimensions.get("window");
 
@@ -34,49 +38,7 @@ const { width } = Dimensions.get("window");
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const HERO_SALAD_IMG = require("../../../assets/images/hero-salad.png");
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const CAB_PREMIUM_IMG = require("../../../assets/images/cab_premium.png");
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const RIDE_IMG = require("../../../assets/images/ride.png");
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const BURGER_CARD_IMG = require("../../../assets/images/burger-food.png");
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const TAXI_CARD_IMG = require("../../../assets/images/taxi-car.png");
-
-const HERO_SLIDES = [
-  {
-    id: "slide-1",
-    tag: "FAST DELIVERY",
-    tagIconType: "mci" as const,
-    tagIconName: "lightning-bolt",
-    title: "Delicious Food\nDelivered Fast",
-    subtitle: "Your favorite meals,\ndelivered to your door",
-    buttonText: "Order Now",
-    imageSource: HERO_SALAD_IMG,
-    imageStyleKey: "heroSaladImg" as const,
-  },
-  {
-    id: "slide-2",
-    tag: "PREMIUM TAXI",
-    tagIconType: "ion" as const,
-    tagIconName: "car-outline",
-    title: "Safe & Fast Rides\nAnywhere",
-    subtitle: "Book your ride with\ntrusted drivers in Garowe",
-    buttonText: "Book Ride",
-    imageSource: CAB_PREMIUM_IMG,
-    imageStyleKey: "heroTaxiImg" as const,
-  },
-  {
-    id: "slide-3",
-    tag: "HOT & FRESH",
-    tagIconType: "mci" as const,
-    tagIconName: "fire",
-    title: "Hot Meals Delivered\nTo Your Door",
-    subtitle: "Order now and get your\nfood delivered piping hot",
-    buttonText: "Order Food",
-    imageSource: RIDE_IMG,
-    imageStyleKey: "heroRideImg" as const,
-  },
-];
 
 // ─── Data ────────────────────────────────────────────────────────────────────
 
@@ -84,29 +46,63 @@ const INITIAL_RESTAURANTS: any[] = [];
 
 const DELIVERY_SCOOTER = "https://wsrv.nl/?url=pngimg.com/uploads/motorcycle/motorcycle_PNG3162.png&output=png";
 
+const CATEGORY_PNG_ICONS: Record<string, string> = {
+  'All': 'https://cdn-icons-png.flaticon.com/512/3075/3075977.png',
+  'Breakfast': 'https://cdn-icons-png.flaticon.com/512/837/837592.png',
+  'Somali Dishes': 'https://cdn-icons-png.flaticon.com/512/3480/3480823.png',
+  'Chicken': 'https://cdn-icons-png.flaticon.com/512/1046/1046751.png',
+  'Pizza': 'https://cdn-icons-png.flaticon.com/512/3595/3595455.png',
+  'Burger': 'https://cdn-icons-png.flaticon.com/512/878/878052.png',
+  'Coffee & Tea': 'https://cdn-icons-png.flaticon.com/512/2935/2935413.png',
+  'Desserts': 'https://cdn-icons-png.flaticon.com/512/2988/2988922.png',
+  'Drinks & Juices': 'https://cdn-icons-png.flaticon.com/512/2405/2405479.png',
+  'Pasta': 'https://cdn-icons-png.flaticon.com/512/135/137837.png',
+  'Sandwich': 'https://cdn-icons-png.flaticon.com/512/6978/6978160.png',
+  'Seafood': 'https://cdn-icons-png.flaticon.com/512/2921/2921822.png',
+};
+
 // ─── Component ───────────────────────────────────────────────────────────────
 
 const HeroCarousel = () => {
   const router = useRouter();
+  const { t } = useLanguage();
   const [activeSlide, setActiveSlide] = React.useState(0);
   const scrollViewRef = React.useRef<ScrollView>(null);
   const isDragging = React.useRef(false);
+  // Use a ref for slide index so the interval is created once and never re-created.
+  // Previously [activeSlide] dep caused the interval to clear+restart every 3.5s — wasted work.
+  const activeSlideRef = React.useRef(0);
+
+  const HERO_SLIDES = React.useMemo(() => [
+    {
+      id: "slide-1",
+      tag: "FAST DELIVERY",
+      tagIconType: "mci" as const,
+      tagIconName: "lightning-bolt",
+      title: t("order_your_favorite"),
+      subtitle: "Your favorite meals,\ndelivered to your door",
+      buttonText: t("order_now"),
+      imageSource: HERO_SALAD_IMG,
+      imageStyleKey: "heroSaladImg" as const,
+    }
+  ], [t]);
 
   React.useEffect(() => {
     const timer = setInterval(() => {
       if (isDragging.current) return;
-      const nextSlide = (activeSlide + 1) % HERO_SLIDES.length;
+      const nextSlide = (activeSlideRef.current + 1) % HERO_SLIDES.length;
       scrollViewRef.current?.scrollTo({ x: nextSlide * (width - 40), animated: true });
     }, 3500);
     return () => clearInterval(timer);
-  }, [activeSlide]);
+  }, [HERO_SLIDES.length]);
 
-  const handleScroll = (e: any) => {
+  const handleScroll = useCallback((e: any) => {
     const slide = Math.round(e.nativeEvent.contentOffset.x / (width - 40));
-    if (slide !== activeSlide && slide >= 0 && slide < HERO_SLIDES.length) {
+    if (slide !== activeSlideRef.current && slide >= 0 && slide < HERO_SLIDES.length) {
+      activeSlideRef.current = slide;
       setActiveSlide(slide);
     }
-  };
+  }, []);
 
   return (
     <Animated.View style={styles.heroBannerContainer}>
@@ -211,7 +207,7 @@ const FilterModal = ({ visible, onClose, sortBy, setSortBy, priceRange, setPrice
       </View>
     </Modal>
   );
-}
+};
 
 interface HomeDishCardProps {
   item: any;
@@ -238,53 +234,48 @@ const HomeDishCard = React.memo((
       >
         <View style={styles.foodImgWrap}>
           <Image source={{ uri: safeImage }} style={styles.foodImg} contentFit="cover" cachePolicy="memory-disk" transition={200} recyclingKey={item.id} />
-          <View style={styles.foodRatingBadge}>
-            <Ionicons name="star" size={12} color="#F5A623" />
-            <Text style={styles.foodRatingText}>{item.rating}</Text>
+          
+          <View style={styles.foodPromoBadge}>
+            <Text style={styles.foodPromoText}>PROMO</Text>
           </View>
-          <TouchableOpacity
-            style={styles.foodHeartBtn}
-            activeOpacity={0.7}
-            onPress={() => toggleWishlist(item)}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <Ionicons
-              name={fav ? "heart" : "heart-outline"}
-              size={16}
-              color={fav ? "#EF4444" : "#FFFFFF"}
-            />
-          </TouchableOpacity>
         </View>
-        <Text style={styles.foodItemTitle} numberOfLines={1}>
-          {item.name}
-        </Text>
-        <View style={styles.foodItemFooter}>
-          <Text style={styles.foodItemPrice}>{item.priceFormatted}</Text>
-          {cartQuantity > 0 ? (
-            <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#F0FDF4', borderRadius: 20, paddingHorizontal: 6, paddingVertical: 4 }}>
-              <TouchableOpacity 
-                onPress={() => cartQuantity > 1 ? updateQuantity(item.id, -1) : removeFromCart(item.id)}
-                style={{ width: 24, height: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF', borderRadius: 12, shadowColor: '#000', shadowOffset: {width:0, height:1}, shadowOpacity: 0.1, shadowRadius: 2, elevation: 1 }}
-              >
-                <Ionicons name="remove" size={14} color="#1B7D3C" />
-              </TouchableOpacity>
-              <Text style={{ marginHorizontal: 8, fontSize: 13, fontWeight: '700', color: '#1B7D3C' }}>{cartQuantity}</Text>
-              <TouchableOpacity 
-                onPress={() => updateQuantity(item.id, 1)}
-                style={{ width: 24, height: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: '#1B7D3C', borderRadius: 12 }}
-              >
-                <Ionicons name="add" size={14} color="#FFFFFF" />
-              </TouchableOpacity>
+        
+        <View style={styles.foodCardContent}>
+          <Text style={styles.foodItemTitle} numberOfLines={1}>
+            {item.name}
+          </Text>
+          
+          <View style={styles.foodSubRow}>
+            <Text style={styles.foodSubText}>{item.distance || '1.5 km'}</Text>
+            <Text style={styles.foodSubDivider}>|</Text>
+            <Ionicons name="star" size={12} color="#F5A623" />
+            <Text style={styles.foodSubText}> {item.rating || '0'} ({item.reviews_count || '0'})</Text>
+          </View>
+
+          <View style={styles.foodBottomRow}>
+            <View style={styles.foodPriceWrap}>
+              <Text style={styles.foodItemPrice}>{item.priceFormatted}</Text>
+              <Text style={styles.foodSubDivider}>|</Text>
+              <Ionicons name="bicycle-outline" size={16} color="#1B7D3C" />
+              <Text style={styles.foodDeliveryText}> {item.delivery_fee > 0 ? `$${Number(item.delivery_fee).toFixed(2)}` : 'Free'}</Text>
             </View>
-          ) : (
+
             <TouchableOpacity
-              style={styles.foodAddBtn}
+              style={styles.foodHeartBtn}
               activeOpacity={0.7}
-              onPress={() => addToCart(item, 1)}
+              onPress={(e) => {
+                e.stopPropagation();
+                toggleWishlist(item);
+              }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
-              <Ionicons name="add" size={18} color="#1B7D3C" />
+              <Ionicons
+                name={fav ? "heart" : "heart-outline"}
+                size={22}
+                color={fav ? "#EF4444" : "#EF4444"} // always red outline or filled
+              />
             </TouchableOpacity>
-          )}
+          </View>
         </View>
       </TouchableOpacity>
     </View>
@@ -301,7 +292,9 @@ const HomeDishCard = React.memo((
 
 export default function HomeScreen() {
   const router = useRouter();
+  const { t } = useLanguage();
   const { addToCart, cartItems, updateQuantity, removeFromCart } = useCart();
+  const { unreadCount } = useNotifications();
   const { isWishlisted, toggleWishlist } = useWishlist();
   const [selectedCategoryName, setSelectedCategoryName] = useState("All");
   const [selectedCategoryId, setSelectedCategoryId] = useState("ALL");
@@ -309,91 +302,183 @@ export default function HomeScreen() {
   const [isFilterModalVisible, setIsFilterModalVisible] = useState(false);
   const [sortBy, setSortBy] = useState("Popularity");
   const [priceRange, setPriceRange] = useState("");
+  const [searchQuery, setSearchQuery] = useState('');
 
   const [allDishes, setAllDishes] = useState<Product[]>([]);
   const [categoriesList, setCategoriesList] = useState<any[]>(CATEGORIES);
   const [restaurantsList, setRestaurantsList] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
+  // ── Saved Addresses ──
+  const ADDRESSES_KEY = '@puntgo_saved_addresses';
+  const DEFAULT_ADDRESSES = [
+    { id: 'custom', label: 'Custom', icon: 'location', address: 'Enter custom address...' },
+  ];
+  const [savedAddresses, setSavedAddresses] = useState<any[]>(DEFAULT_ADDRESSES);
+  const [activeAddressId, setActiveAddressId] = useState('custom');
+  const [isAddressSelectorVisible, setIsAddressSelectorVisible] = useState(false);
+  const [customAddressText, setCustomAddressText] = useState('');
+
+  const activeAddress = useMemo(() =>
+    savedAddresses.find(a => a.id === activeAddressId) || savedAddresses[0],
+  [savedAddresses, activeAddressId]);
+
+  useFocusEffect(
+    useCallback(() => {
+      let isMounted = true;
+      const fetchAddresses = async () => {
+        try {
+          const sessionStr = await AsyncStorage.getItem("puntgo_user_session");
+          if (!sessionStr) return;
+          const session = JSON.parse(sessionStr);
+          if (!session.id) return;
+          
+          const { data, error } = await supabase
+            .from("saved_addresses")
+            .select("*")
+            .eq("user_id", session.id)
+            .order("is_default", { ascending: false })
+            .order("created_at", { ascending: true });
+            
+          if (!error && data && isMounted) {
+            const mapped = data.map(a => ({
+              id: a.id,
+              label: a.label,
+              icon: a.label === 'Home' ? 'home' : a.label === 'Office' ? 'business' : 'location',
+              address: a.address,
+              is_default: a.is_default
+            }));
+            setSavedAddresses([...mapped, ...DEFAULT_ADDRESSES]);
+            
+            // if we have addresses and current selection is missing, default to the top one
+            const hasActive = mapped.some(m => m.id === activeAddressId);
+            if (!hasActive && mapped.length > 0) {
+              const defaultAddr = mapped.find(m => m.is_default) || mapped[0];
+              setActiveAddressId(defaultAddr.id);
+            }
+          }
+        } catch (e) {}
+      };
+      
+      fetchAddresses();
+      
+      AsyncStorage.getItem(ADDRESSES_KEY).then(raw => {
+        if (raw && isMounted) {
+          try {
+            const parsed = JSON.parse(raw);
+            if (parsed.activeId) setActiveAddressId(parsed.activeId);
+            if (parsed.customText) setCustomAddressText(parsed.customText);
+          } catch {}
+        }
+      });
+      
+      return () => { isMounted = false; };
+    }, [activeAddressId])
+  );
+
+  const selectAddress = useCallback((id: string) => {
+    setActiveAddressId(id);
+    setIsAddressSelectorVisible(false);
+    AsyncStorage.setItem(ADDRESSES_KEY, JSON.stringify({ activeId: id, customText: customAddressText }));
+  }, [customAddressText]);
+
+  const customText = customAddressText;
+
   useEffect(() => {
-    const loadData = async () => {
-      try {
-        // 1. Read BOTH caches in parallel — was sequential, costing ~100ms extra
-        const [cachedRest, cachedProd] = await Promise.all([
-          AsyncStorage.getItem('@cached_home_restaurants'),
-          AsyncStorage.getItem('@cached_home_products'),
-        ]);
+    // ── Step 1: Render instantly from memory cache (zero network) ──
+    const memProducts = getCachedAllProducts();
+    const memRestaurants = getCachedRestaurants();
+    if (memProducts.length > 0) {
+      setAllDishes(memProducts);
+      setIsLoading(false);
+    }
+    if (memRestaurants.length > 0) {
+      setRestaurantsList(memRestaurants);
+    }
 
-        if (cachedRest && cachedProd && cachedProd !== '[]') {
-          setRestaurantsList(JSON.parse(cachedRest));
-          setAllDishes(JSON.parse(cachedProd));
-          setIsLoading(false); // Show cached UI instantly
-        }
+    // ── Step 2: Fetch fresh data in background (stale-while-revalidate) ──
+    fetchRestaurants().then(result => {
+      if (result && result.length > 0) setRestaurantsList(result);
+    }).catch(() => {});
 
-        // 2. Fetch restaurants + products in PARALLEL — was sequential, costing 1–3s extra
-        // Only select columns the UI actually uses — reduces JSON payload by ~60%
-        const [restResult, fetchedProducts] = await Promise.all([
-          supabase
-            .from('restaurants')
-            .select('id, name, category, prep_time, delivery_fee, rating, cover_image, image_url, logo_image, emoji, status')
-            .eq('status', 'Active')
-            .limit(20),
-          fetchProductsFromSupabase(),
-        ]);
-
-        if (restResult.data) {
-          const mappedRests = restResult.data.map((r: any) => ({
-            id: String(r.id),
-            name: r.name || "Restaurant",
-            tags: r.category || "Somali Traditional & Fast Food",
-            time: r.prep_time || "20-30m",
-            fee: r.delivery_fee || "$2.00",
-            rating: String(r.rating || "4.8"),
-            image: r.cover_image || r.image_url,
-            coverImage: r.cover_image || r.image_url,
-            logoImage: r.logo_image || r.emoji || "🏪",
-            emoji: r.emoji || r.logo_image || "🏪",
-            status: r.status || "Active",
-          }));
-          setRestaurantsList(mappedRests);
-          AsyncStorage.setItem('@cached_home_restaurants', JSON.stringify(mappedRests)).catch(() => null);
-        }
-        if (fetchedProducts && fetchedProducts.length > 0) {
-          setAllDishes(fetchedProducts);
-          AsyncStorage.setItem('@cached_home_products', JSON.stringify(fetchedProducts)).catch(() => null);
-        }
+    fetchAllProducts().then(result => {
+      if (result && result.length > 0) {
+        setAllDishes(result);
         setIsLoading(false);
-      } catch (err) {
+      } else {
+        // Network returned nothing — clear loading state so skeletons don't spin forever
         setIsLoading(false);
       }
+    }).catch(() => {
+    }).catch(() => {
+      setIsLoading(false);
+    });
+
+    // ── Step 3: Realtime Database Listeners ──
+    const refreshData = async () => {
+      const freshRestaurants = await fetchRestaurants(true);
+      if (freshRestaurants?.length > 0) setRestaurantsList(freshRestaurants);
+
+      const freshProducts = await fetchAllProducts(true);
+      if (freshProducts?.length > 0) setAllDishes(freshProducts);
     };
 
-    loadData();
+    const realtimeChannel = supabase.channel(`customer_app_index_${Date.now()}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'restaurants' }, refreshData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'food_items' }, refreshData)
+      .subscribe();
 
-    // Removed global realtime on food_items + restaurants tables — was triggering
-    // full data reload for ANY change from ANY restaurant, causing unnecessary re-renders.
-    // Data is stale-while-revalidate via cache; use manual refresh for admin updates.
+    return () => {
+      supabase.removeChannel(realtimeChannel);
+    };
   }, []);
 
+
   const categoriesWithItems = useMemo(() => {
-    return CATEGORIES.filter(cat => {
-      if (cat.id === '0' || cat.id === 'ALL') return true;
-      return allDishes.some(dish => 
-        dish.category_id === cat.id ||
-        dish.category?.toLowerCase().includes(cat.name.toLowerCase()) ||
-        dish.name?.toLowerCase().includes(cat.name.toLowerCase())
-      );
-    });
+    if (!allDishes || allDishes.length === 0) return [];
+    
+    // Unique list of categories present in DB items
+    const rawCategories = Array.from(new Set(allDishes.map((item) => item.category).filter(Boolean)));
+    
+    const formattedCategories = [
+      { id: 'all', name: 'All', emoji: '🍽️' },
+      ...rawCategories.map((catName) => {
+        const catNameStr = String(catName);
+        const normalizedDBName = catNameStr.trim().toLowerCase();
+        const found = CATEGORIES.find(c => c.name.toLowerCase() === normalizedDBName || c.name.toLowerCase().includes(normalizedDBName) || normalizedDBName.includes(c.name.toLowerCase()));
+        
+        return {
+          id: found?.id || catNameStr.toLowerCase().replace(/\s+/g, '-'),
+          name: catNameStr,
+          emoji: found?.emoji,
+        };
+      })
+    ];
+
+    return formattedCategories;
   }, [allDishes]);
 
   const filteredFoods = useMemo(() => {
-    let foods = (selectedCategoryId === 'ALL' || selectedCategoryId === '0' || selectedCategoryName.toLowerCase() === 'all')
+    let foods = (selectedCategoryId === 'all' || selectedCategoryName.toLowerCase() === 'all')
       ? allDishes 
-      : allDishes.filter(dish => 
-          dish.category_id === selectedCategoryId ||
-          (dish.category && dish.category.toLowerCase().includes(selectedCategoryName.toLowerCase())) ||
-          (dish.name && dish.name.toLowerCase().includes(selectedCategoryName.toLowerCase()))
-        );
+      : allDishes.filter(dish => {
+          if (dish.category_id === selectedCategoryId) return true;
+          const searchCat = selectedCategoryName.toLowerCase();
+          const dishCat = dish.category ? dish.category.toLowerCase() : "";
+          const dishName = dish.name ? dish.name.toLowerCase() : "";
+          return dishCat.includes(searchCat) || dishName.includes(searchCat);
+        });
+
+    // ⚡ Instant live search filter
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      foods = foods.filter(dish =>
+        dish.name?.toLowerCase().includes(q) ||
+        dish.category?.toLowerCase().includes(q) ||
+        dish.restaurant_name?.toLowerCase().includes(q) ||
+        dish.description?.toLowerCase().includes(q)
+      );
+    }
 
     if (priceRange === '$') {
        foods = foods.filter(item => item.price < 5);
@@ -408,16 +493,16 @@ export default function HomeScreen() {
     } else if (sortBy === 'Delivery Time') {
        return [...foods].sort((a, b) => parseInt(a.deliveryTime || '0') - parseInt(b.deliveryTime || '0'));
     }
-
     return foods;
-  }, [allDishes, selectedCategoryId, selectedCategoryName, priceRange, sortBy]);
+  }, [allDishes, selectedCategoryId, selectedCategoryName, priceRange, sortBy, searchQuery]);
+
 
   // Build a quantity map so renderItem doesn't do O(n) .find() per dish
   // Before: cartItems.find(c => c.id === item.id)?.quantity — O(n) × numDishes per render
   // After: O(1) Map lookup per dish
   const cartQuantityMap = useMemo(() => {
     const map = new Map<string, number>();
-    cartItems.forEach(c => map.set(c.id, c.quantity));
+    cartItems.forEach(c => map.set(c.id, (map.get(c.id) || 0) + c.quantity));
     return map;
   }, [cartItems]);
 
@@ -430,12 +515,13 @@ export default function HomeScreen() {
     <>
       {/* ── Search ── */}
       <Animated.View style={styles.searchRow}>
-        <TouchableOpacity style={styles.searchBox} activeOpacity={0.9} onPress={() => router.push('/search')}>
+        <TouchableOpacity
+          style={styles.searchBox}
+          activeOpacity={0.75}
+          onPress={() => router.push('/search')}
+        >
           <Ionicons name="search" size={20} color="#9CA3AF" style={{ marginRight: 10 }} />
-          <Text style={{ color: "#9CA3AF", fontSize: 15, flex: 1 }}>Search food, restaurants, dishes...</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.filterBtn} activeOpacity={0.7} onPress={() => setIsFilterModalVisible(true)}>
-          <Ionicons name="options-outline" size={20} color="#1A1A1A" />
+          <Text style={styles.searchPlaceholder}>{t('search_placeholder')}</Text>
         </TouchableOpacity>
       </Animated.View>
 
@@ -446,8 +532,8 @@ export default function HomeScreen() {
       <Animated.View style={styles.cardsRow}>
         <TouchableOpacity style={[styles.serviceCard, styles.foodCard]} activeOpacity={0.7}>
           <View style={styles.cardTextContent}>
-            <Text style={styles.cardTitle}>Food{"\n"}Delivery</Text>
-            <Text style={styles.cardSubtitle}>Order your{"\n"}favorite food</Text>
+            <Text style={styles.cardTitle}>{t("food_service").replace(' ', '\n')}</Text>
+            <Text style={styles.cardSubtitle}>{t("order_your_favorite")}</Text>
             <View style={[styles.cardArrow, { backgroundColor: "#1B7D3C" }]}>
               <Ionicons name="arrow-forward" size={15} color="#FFF" />
             </View>
@@ -455,22 +541,22 @@ export default function HomeScreen() {
           <Image source={BURGER_CARD_IMG} style={styles.burgerImg} contentFit="contain" cachePolicy="memory-disk" transition={200} />
         </TouchableOpacity>
 
-        <TouchableOpacity style={[styles.serviceCard, styles.taxiCard]} activeOpacity={0.7}>
+        <TouchableOpacity style={[styles.serviceCard, styles.parcelCard]} activeOpacity={0.7} onPress={() => router.push('/parcel')}>
           <View style={styles.cardTextContent}>
-            <Text style={styles.cardTitle}>Taxi{"\n"}Service</Text>
-            <Text style={styles.cardSubtitle}>Book a ride{"\n"}anywhere</Text>
+            <Text style={styles.cardTitle}>{"Parcel\nDelivery"}</Text>
+            <Text style={styles.cardSubtitle}>{"Send a package"}</Text>
             <View style={[styles.cardArrow, { backgroundColor: "#F5A623" }]}>
               <Ionicons name="arrow-forward" size={15} color="#FFF" />
             </View>
           </View>
-          <Image source={TAXI_CARD_IMG} style={styles.carImg} contentFit="contain" cachePolicy="memory-disk" transition={200} />
+          <Image source={{ uri: "https://cdn-icons-png.flaticon.com/512/2972/2972185.png" }} style={[styles.carImg, { width: 64, height: 64, right: 8, bottom: 8 }]} contentFit="contain" cachePolicy="memory-disk" transition={200} />
         </TouchableOpacity>
       </Animated.View>
 
       {/* ── Categories ── */}
       <Animated.View style={styles.sectionRow}>
-        <Text style={styles.sectionTitle}>Categories</Text>
-        <TouchableOpacity activeOpacity={0.8} onPress={() => router.push('/categories')}><Text style={styles.seeAll}>See all</Text></TouchableOpacity>
+        <Text style={styles.sectionTitle}>{t("categories")}</Text>
+        <TouchableOpacity activeOpacity={0.8} onPress={() => router.push('/categories')}><Text style={styles.seeAll}>{t("see_all")}</Text></TouchableOpacity>
       </Animated.View>
 
       <FlatList
@@ -494,15 +580,11 @@ export default function HomeScreen() {
               }}
             >
               <View style={[styles.catCard, active && styles.catCardActive]}>
-                {cat.image ? (
-                  <Image source={typeof cat.image === 'string' ? { uri: cat.image } : cat.image} style={styles.catImg} contentFit="cover" cachePolicy="memory-disk" transition={200} />
-                ) : cat.emoji ? (
-                  <Text style={styles.catEmoji}>{cat.emoji}</Text>
-                ) : (
-                  <Ionicons name={cat.id === "0" || cat.id === "ALL" ? "restaurant-outline" : "fast-food-outline"} size={34} color={active ? "#10B981" : "#4B5563"} />
-                )}
+                <Text style={styles.catEmoji}>{cat.emoji || (cat.id === "0" || cat.id === "all" ? "🍽️" : "🍴")}</Text>
               </View>
-              <Text style={[styles.catName, active && styles.catNameActive]}>{cat.name}</Text>
+              <Text style={[styles.catName, active && styles.catNameActive]} numberOfLines={1} ellipsizeMode="tail">
+                {cat.name}
+              </Text>
             </TouchableOpacity>
           );
         }}
@@ -518,8 +600,8 @@ export default function HomeScreen() {
     <>
       {/* ── Popular Restaurants ── */}
       <Animated.View style={styles.sectionRow} entering={FadeInDown.duration(400).delay(260)}>
-        <Text style={styles.sectionTitle}>Popular Restaurants</Text>
-        <TouchableOpacity><Text style={styles.seeAll}>See all</Text></TouchableOpacity>
+        <Text style={styles.sectionTitle}>{t("popular_restaurants")}</Text>
+        <TouchableOpacity onPress={() => router.push('/all-restaurants')}><Text style={styles.seeAll}>{t("see_all")}</Text></TouchableOpacity>
       </Animated.View>
 
       <FlatList
@@ -554,11 +636,11 @@ export default function HomeScreen() {
       <Animated.View style={styles.promoBanner}>
         <Image source={{ uri: DELIVERY_SCOOTER }} style={styles.scooterImg} contentFit="contain" cachePolicy="memory-disk" transition={200} />
         <View style={{ flex: 1, marginLeft: 10 }}>
-          <Text style={styles.promoTitle}>Get 20% Off</Text>
-          <Text style={styles.promoSub}>On your first order</Text>
+          <Text style={styles.promoTitle}>{t("get_20_off")}</Text>
+          <Text style={styles.promoSub}>{t("on_first_order")}</Text>
         </View>
         <TouchableOpacity style={styles.promoBtn} activeOpacity={0.7}>
-          <Text style={styles.promoBtnText}>Order Now</Text>
+          <Text style={styles.promoBtnText}>{t("order_now")}</Text>
           <View style={styles.promoArrow}>
             <Ionicons name="arrow-forward" size={13} color="#1B7D3C" />
           </View>
@@ -566,7 +648,7 @@ export default function HomeScreen() {
       </Animated.View>
     </>
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  ), [isLoading, allDishes.length, restaurantsList]);
+  ), [isLoading, allDishes.length, restaurantsList, isWishlisted, toggleWishlist, t]);
 
   // Stable renderItem — useCallback ensures HomeDishCard's React.memo actually works.
   // Without this, the inline anonymous function recreates every render, defeating memoization.
@@ -602,15 +684,28 @@ export default function HomeScreen() {
 
       {/* ── Header ── */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.locationRow} activeOpacity={0.7}>
+        <TouchableOpacity style={styles.locationRow} activeOpacity={0.7} onPress={() => setIsAddressSelectorVisible(true)}>
           <Ionicons name="location" size={20} color="#1B7D3C" />
-          <Text style={styles.locationText}>Garowe, Puntland</Text>
+          <View style={{ marginLeft: 6 }}>
+            <Text style={{ fontSize: 11, color: '#6B6B6B', fontWeight: '600' }}>Delivering to</Text>
+            <Text style={styles.locationText} numberOfLines={1}>
+              {activeAddressId === 'custom' && customAddressText ? customAddressText : activeAddress?.label || t('garowe_puntland')}
+            </Text>
+          </View>
           <Ionicons name="chevron-down" size={16} color="#1A1A1A" style={{ marginLeft: 4 }} />
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.bellWrap} activeOpacity={0.7}>
+        <TouchableOpacity 
+          style={styles.bellWrap} 
+          activeOpacity={0.7}
+          onPress={() => router.push('/notifications')}
+        >
           <Ionicons name="notifications-outline" size={24} color="#1A1A1A" />
-          <View style={styles.badge}><Text style={styles.badgeText}>3</Text></View>
+          {unreadCount > 0 && (
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
+            </View>
+          )}
         </TouchableOpacity>
       </View>
 
@@ -641,20 +736,85 @@ export default function HomeScreen() {
         extraData={cartExtraKey}
         renderItem={renderFoodItem}
       />
-      
-      <FilterModal
-        visible={isFilterModalVisible}
-        onClose={() => setIsFilterModalVisible(false)}
-        sortBy={sortBy}
-        setSortBy={setSortBy}
-        priceRange={priceRange}
-        setPriceRange={setPriceRange}
-        onApply={() => setIsFilterModalVisible(false)}
-        onReset={() => {
-          setSortBy("Popularity");
-          setPriceRange("$");
-        }}
-      />
+            {/* ── Location Selector Modal ── */}
+        <Modal
+          visible={isAddressSelectorVisible}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setIsAddressSelectorVisible(false)}
+        >
+          <TouchableOpacity
+            style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' }}
+            activeOpacity={1}
+            onPress={() => setIsAddressSelectorVisible(false)}
+          />
+          <View style={styles.addressSheet}>
+            <View style={styles.addressSheetHandle} />
+            <Text style={styles.addressSheetTitle}>Deliver To</Text>
+            {savedAddresses.map(addr => (
+              <TouchableOpacity
+                key={addr.id}
+                style={[styles.addressRow, activeAddressId === addr.id && styles.addressRowActive]}
+                onPress={() => selectAddress(addr.id)}
+                activeOpacity={0.8}
+              >
+                <View style={[styles.addressIconWrap, activeAddressId === addr.id && styles.addressIconWrapActive]}>
+                  <Ionicons name={addr.icon as any} size={20} color={activeAddressId === addr.id ? '#FFFFFF' : '#1B7D3C'} />
+                </View>
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={[styles.addressLabel, activeAddressId === addr.id && styles.addressLabelActive]}>{addr.label}</Text>
+                  <Text style={styles.addressValue} numberOfLines={1}>
+                    {addr.id === 'custom' && customAddressText ? customAddressText : addr.address}
+                  </Text>
+                  {addr.id === 'custom' && activeAddressId === 'custom' && (
+                    <TextInput
+                      style={styles.customAddressInput}
+                      value={customAddressText}
+                      onChangeText={setCustomAddressText}
+                      placeholder="Type your address..."
+                      placeholderTextColor="#9CA3AF"
+                      onBlur={() => AsyncStorage.setItem(ADDRESSES_KEY, JSON.stringify({ activeId: 'custom', customText: customAddressText }))}
+                    />
+                  )}
+                </View>
+                {activeAddressId === addr.id && (
+                  <Ionicons name="checkmark-circle" size={22} color="#1B7D3C" />
+                )}
+              </TouchableOpacity>
+            ))}
+            
+            <TouchableOpacity
+              style={{
+                flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+                backgroundColor: '#1B7D3C', borderRadius: 14, paddingVertical: 14, marginTop: 10
+              }}
+              activeOpacity={0.85}
+              onPress={() => {
+                setIsAddressSelectorVisible(false);
+                router.push('/saved-addresses');
+              }}
+            >
+              <Ionicons name="add" size={20} color="#FFFFFF" style={{ marginRight: 6 }} />
+              <Text style={{ fontSize: 15, fontWeight: '700', color: '#FFFFFF' }}>Add New Address</Text>
+            </TouchableOpacity>
+            
+            <View style={{ height: 32 }} />
+          </View>
+        </Modal>
+
+        <FilterModal
+          visible={isFilterModalVisible}
+          onClose={() => setIsFilterModalVisible(false)}
+          sortBy={sortBy}
+          setSortBy={setSortBy}
+          priceRange={priceRange}
+          setPriceRange={setPriceRange}
+          onApply={() => setIsFilterModalVisible(false)}
+          onReset={() => {
+            setSortBy("Popularity");
+            setPriceRange("$");
+          }}
+        />
 
       </SafeAreaView>
     </Animated.View>
@@ -678,7 +838,64 @@ const styles = StyleSheet.create({
     backgroundColor: "#F8F8F8",
   },
   locationRow: { flexDirection: "row", alignItems: "center" },
-  locationText: { fontSize: 16, fontWeight: "700", color: "#1A1A1A", marginLeft: 6 },
+  locationText: { fontSize: 16, fontWeight: "700", color: "#1A1A1A" },
+  addressSheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 10,
+  },
+  addressSheetHandle: {
+    width: 40, height: 4, borderRadius: 2,
+    backgroundColor: '#E5E7EB', alignSelf: 'center', marginBottom: 16,
+  },
+  addressSheetTitle: {
+    fontSize: 18, fontWeight: '800', color: '#1A1A1A', marginBottom: 16,
+  },
+  addressRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 14,
+    borderRadius: 14,
+    marginBottom: 10,
+    backgroundColor: '#F8F9FA',
+    borderWidth: 1.5,
+    borderColor: 'transparent',
+  },
+  addressRowActive: {
+    backgroundColor: '#F0FDF4',
+    borderColor: '#1B7D3C',
+  },
+  addressIconWrap: {
+    width: 42, height: 42, borderRadius: 21,
+    backgroundColor: '#F0FDF4',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  addressIconWrapActive: { backgroundColor: '#1B7D3C' },
+  addressLabel: {
+    fontSize: 15, fontWeight: '700', color: '#1A1A1A',
+  },
+  addressLabelActive: { color: '#1B7D3C' },
+  addressValue: {
+    fontSize: 12, color: '#6B6B6B', marginTop: 2,
+  },
+  customAddressInput: {
+    marginTop: 8,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 14,
+    color: '#1A1A1A',
+  },
   bellWrap: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
   badge: {
     position: "absolute", top: 6, right: 5,
@@ -694,11 +911,12 @@ const styles = StyleSheet.create({
   searchBox: {
     flex: 1, flexDirection: "row", alignItems: "center",
     backgroundColor: "#FFF", height: 48, borderRadius: 14,
-    paddingHorizontal: 14, marginRight: 10,
+    paddingHorizontal: 14,
     borderWidth: 1, borderColor: "#F3F4F6",
     shadowColor: "#000", shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.03, shadowRadius: 4, elevation: 2,
   },
+  searchPlaceholder: { flex: 1, fontSize: 14, color: "#9CA3AF" },
   searchInput: { flex: 1, fontSize: 14, color: "#1A1A1A" },
   filterBtn: {
     width: 48, height: 48, backgroundColor: "#FFF", borderRadius: 14,
@@ -853,7 +1071,7 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   foodCard: { backgroundColor: "#EFFDF4" },
-  taxiCard: { backgroundColor: "#FFFBEB" },
+  parcelCard: { backgroundColor: "#FFFBEB" },
   cardTextContent: {
     zIndex: 2,
     flex: 1,
@@ -909,19 +1127,21 @@ const styles = StyleSheet.create({
   seeAll: { fontSize: 14, fontWeight: "600", color: "#1B7D3C" },
 
   /* ── Categories ── */
-  catItem: { alignItems: "center", marginRight: 18, width: 70 },
+  catItem: { alignItems: "center", marginRight: 18, width: 64 },
   catCard: {
-    width: 70, height: 70, borderRadius: 20,
-    backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center",
-    borderWidth: 1, borderColor: "#F3F4F6",
+    width: 64, height: 64, borderRadius: 32,
+    backgroundColor: "transparent", alignItems: "center", justifyContent: "center",
+    marginBottom: 8,
   },
   catCardActive: {
-    borderColor: "#10B981", borderWidth: 2,
+    backgroundColor: "#E8F5E9",
   },
-  catImg: { width: 44, height: 44, borderRadius: 12 },
-  catEmoji: { fontSize: 24 },
-  catName: { fontSize: 13, fontWeight: "600", color: "#1F2937", marginTop: 6, textAlign: "center" },
-  catNameActive: { color: "#10B981", fontWeight: "700" },
+  catImg: { 
+    width: 48, height: 48,
+},
+  catEmoji: { fontSize: 42 },
+  catName: { fontSize: 13, fontWeight: "600", color: "#4B5563", textAlign: "center", width: "100%", paddingHorizontal: 4 },
+  catNameActive: { color: "#1B7D3C", fontWeight: "700" },
 
   /* ── Food Grid ── */
   foodGridSection: {
@@ -952,82 +1172,83 @@ const styles = StyleSheet.create({
   foodCardItem: {
     width: "48%",
     backgroundColor: "#FFFFFF",
-    borderRadius: 16,
-    padding: 10,
-    marginBottom: 12,
+    borderRadius: 24,
+    marginBottom: 16,
     borderWidth: 1,
     borderColor: "#F3F4F6",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 5,
-    elevation: 2,
+    shadowColor: "#000", shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05, shadowRadius: 8, elevation: 2,
+    overflow: "hidden",
   },
   foodImgWrap: {
     width: "100%",
-    height: 110,
-    borderRadius: 12,
-    overflow: "hidden",
+    aspectRatio: 1, // Square ratio
     position: "relative",
-    backgroundColor: "#F3F4F6",
   },
   foodImg: {
     width: "100%",
-    height: 110,
-    borderRadius: 12,
+    height: "100%",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
   },
-  foodRatingBadge: {
+  foodPromoBadge: {
     position: "absolute",
-    bottom: 8,
-    left: 8,
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "rgba(255, 255, 255, 0.95)",
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: 12,
-    gap: 3,
+    top: 12,
+    left: 12,
+    backgroundColor: "#4ADE80",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
   },
-  foodRatingText: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: "#1A1A1A",
+  foodPromoText: {
+    color: "#FFFFFF",
+    fontSize: 10,
+    fontWeight: "800",
   },
-  foodHeartBtn: {
-    position: "absolute",
-    top: 7,
-    right: 7,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: "rgba(0,0,0,0.35)",
-    alignItems: "center",
-    justifyContent: "center",
+  foodCardContent: {
+    padding: 12,
   },
   foodItemTitle: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: "700",
     color: "#1A1A1A",
-    marginTop: 10,
+    marginBottom: 6,
   },
-  foodItemFooter: {
+  foodSubRow: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
-    marginTop: 6,
+    marginBottom: 12,
+  },
+  foodSubText: {
+    fontSize: 12,
+    color: "#6B6B6B",
+  },
+  foodSubDivider: {
+    fontSize: 12,
+    color: "#D1D5DB",
+    marginHorizontal: 6,
+  },
+  foodBottomRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  foodPriceWrap: {
+    flexDirection: "row",
+    alignItems: "center",
   },
   foodItemPrice: {
-    fontSize: 15,
+    fontSize: 18,
     fontWeight: "800",
-    color: "#1A1A1A",
+    color: "#22C55E",
   },
-  foodAddBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: "#EFFDF4",
-    alignItems: "center",
-    justifyContent: "center",
+  foodDeliveryText: {
+    fontSize: 12,
+    color: "#6B6B6B",
+  },
+  foodHeartBtn: {
+    width: 28, height: 28,
+    alignItems: "center", justifyContent: "center",
   },
 
   /* ── Restaurants ── */
@@ -1106,5 +1327,29 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontSize: 16.5,
     fontWeight: "800",
+  },
+  /* ── Modals ── */
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    justifyContent: "flex-end",
+  },
+  modalCard: {
+    backgroundColor: "#FFFFFF",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingTop: 24,
+    paddingBottom: 40,
+  },
+  modalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 20,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: "800",
+    color: "#1A1A1A",
   },
 });

@@ -12,6 +12,7 @@ import {
   useWindowDimensions,
   Alert,
   ActivityIndicator,
+  DeviceEventEmitter,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Stack, router } from "expo-router";
@@ -20,6 +21,7 @@ import * as WebBrowser from "expo-web-browser";
 import * as AuthSession from "expo-auth-session";
 import { supabase } from "../../lib/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useToast } from "@/lib/GlobalErrorProvider";
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -29,58 +31,61 @@ export default function LoginScreen() {
   const [googleLoading, setGoogleLoading] = useState(false);
   const { height } = useWindowDimensions();
   const isSmallScreen = height < 700;
+  const { showError, showSuccess, showWarning, isOnline } = useToast();
 
   const handleContinue = async () => {
     if (phoneNumber.trim().length === 0 || loading) return;
+
+    if (!isOnline) {
+      showError("⚠️ Internet-ku waa maqan yahay. Fadlan hubi Wi-Fi ama Data-daada.");
+      return;
+    }
+
     const fullPhone = "+252" + phoneNumber.trim();
     setLoading(true);
     try {
       // 1. Check if user exists in Supabase
+      // Using maybeSingle() prevents throwing PGRST116 when 0 rows are found
       const { data: profile, error } = await supabase
         .from('profiles')
         .select('*')
         .eq('phone_number', fullPhone)
-        .single();
+        .maybeSingle();
+
+      if (error) {
+        console.error("Login Supabase Error:", error);
+        showError("⚠️ Serverka cilad baa ka dhacday. Dib u tijaabi.");
+        return;
+      }
 
       if (profile) {
-        // User exists! Create session object
-        const sessionData = { 
-          id: profile.id, 
-          full_name: profile.full_name, 
-          phone_number: profile.phone_number 
-        };
+        // User exists! Generate and send OTP for verification
+        const otp = Math.floor(1000 + Math.random() * 9000).toString();
         
-        // Save to AsyncStorage
-        await AsyncStorage.setItem('puntgo_user_session', JSON.stringify(sessionData));
-        
-        // Navigate directly
-        router.replace('/(tabs)');
+        const { data: whatsappData, error: whatsappError } = await supabase.functions.invoke('send-whatsapp-otp', {
+          body: { phone: fullPhone, otp }
+        });
+
+        if (whatsappError) {
+          console.warn("Functions Invocation Error:", whatsappError);
+          Alert.alert("Dev Mode", "WhatsApp OTP failed. Proceeding anyway. Use code: 0000 to verify.");
+        } else if (whatsappData && whatsappData.success === false) {
+          console.warn("Meta API Error:", whatsappData.error);
+          Alert.alert("Dev Mode", "WhatsApp delivery failed. Proceeding anyway. Use code: 0000 to verify.");
+        }
+
+        showSuccess("Fadlan geli code-ka laguugu soo diray WhatsApp.");
+        router.push(`/(home)/verify-otp?phone=${encodeURIComponent(fullPhone)}&sentOtp=${otp}&full_name=${encodeURIComponent(profile.full_name)}`);
       } else {
-        // User does not exist
-        Alert.alert(
-          "Account Not Found", 
-          "Please sign up first to create a PuntGo account.",
-          [
-            { text: "Cancel", style: "cancel" },
-            { text: "Sign Up", onPress: () => router.push("/(home)/signup") }
-          ]
-        );
+        // User does not exist (0 rows returned)
+        showWarning("Fadlan isdiiwaangeli horta si aad account u samaysato.");
+        setTimeout(() => {
+          router.push("/(home)/signup");
+        }, 1500);
       }
     } catch (err: any) {
-      if (err.code === 'PGRST116') {
-        // PGRST116 means zero rows returned (not found)
-        Alert.alert(
-          "Account Not Found", 
-          "Please sign up first to create a PuntGo account.",
-          [
-            { text: "Cancel", style: "cancel" },
-            { text: "Sign Up", onPress: () => router.push("/(home)/signup") }
-          ]
-        );
-      } else {
-        console.error(err);
-        Alert.alert("Error", "Something went wrong checking your account.");
-      }
+      console.error("Login unexpected error:", err);
+      showError("⚠️ Khalad ayaa dhacay. Fadlan dib u tijaabi.");
     } finally {
       setLoading(false);
     }
@@ -88,6 +93,11 @@ export default function LoginScreen() {
 
   const handleGoogleLogin = async () => {
     if (googleLoading) return;
+    if (!isOnline) {
+      showError("⚠️ Internet-ku waa maqan yahay. Fadlan hubi Wi-Fi ama Data-daada.");
+      return;
+    }
+
     setGoogleLoading(true);
     try {
       // 1. Create redirect URI for Expo Go
@@ -103,12 +113,12 @@ export default function LoginScreen() {
       });
 
       if (error) {
-        Alert.alert("Google Sign-In Error", error.message);
+        showError(error.message);
         return;
       }
 
       if (!data?.url) {
-        Alert.alert("Error", "Failed to generate sign-in URL.");
+        showError("Failed to generate sign-in URL.");
         return;
       }
 
@@ -133,24 +143,38 @@ export default function LoginScreen() {
           if (!sessionError && sessionDataObj?.user) {
             // Unify session by also saving Google profile to AsyncStorage
             const user = sessionDataObj.user;
+            
+            const fullName = user.user_metadata?.full_name || 'Google User';
+            const avatarUrl = user.user_metadata?.avatar_url || null;
+
+            // Ensure profile exists in Supabase
+            await supabase.from('profiles').upsert({
+              id: user.id,
+              full_name: fullName,
+              phone_number: user.phone || null,
+              avatar_url: avatarUrl,
+              role: 'customer' // ensure default role
+            }, { onConflict: 'id' }).select().single();
+
             const sessionData = {
               id: user.id,
-              full_name: user.user_metadata?.full_name || 'Google User',
+              full_name: fullName,
               phone_number: user.phone || '',
               email: user.email || '',
-              avatar_url: user.user_metadata?.avatar_url || null,
+              avatar_url: avatarUrl,
             };
             await AsyncStorage.setItem('puntgo_user_session', JSON.stringify(sessionData));
 
-            Alert.alert("Success", "Signed in with Google successfully!");
+            DeviceEventEmitter.emit('AUTH_STATE_CHANGED', true);
+            showSuccess("Waa lagu soo dhaweynayaa (Google)!");
             router.replace("/(tabs)");
           } else {
-            Alert.alert("Session Error", sessionError?.message || "Failed to establish session");
+            showError(sessionError?.message || "Failed to establish session");
           }
         }
       }
     } catch (err: any) {
-      Alert.alert("Auth Error", err.message || "An error occurred during sign in.");
+      showError(err.message || "An error occurred during sign in.");
     } finally {
       setGoogleLoading(false);
     }
@@ -177,7 +201,7 @@ export default function LoginScreen() {
           {/* ── Logo ── */}
           <View style={[styles.logoSection, { marginTop: isSmallScreen ? 32 : 56 }]}>
             <Image
-              source={require("../../../assets/images/puntgo_logo.png")}
+              source={require("../../../assets/branding/punteats-logo.png")}
               style={styles.logo}
               resizeMode="contain"
             />
@@ -262,15 +286,7 @@ export default function LoginScreen() {
               )}
             </TouchableOpacity>
 
-            {/* Facebook */}
-            <TouchableOpacity style={styles.socialButton} activeOpacity={0.75}>
-              <FontAwesome name="facebook" size={32} color="#1877F2" />
-            </TouchableOpacity>
-
-            {/* Apple */}
-            <TouchableOpacity style={styles.socialButton} activeOpacity={0.75}>
-              <Ionicons name="logo-apple" size={32} color="#000000" />
-            </TouchableOpacity>
+            {/* Facebook / Apple buttons removed pending real implementations */}
           </View>
 
           {/* ── Footer ── */}
@@ -310,8 +326,8 @@ const styles = StyleSheet.create({
     marginBottom: 28,
   },
   logo: {
-    width: 88,
-    height: 88,
+    width: 220,
+    height: 70,
   },
 
   // ── Header ──

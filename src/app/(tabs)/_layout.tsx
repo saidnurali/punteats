@@ -52,12 +52,13 @@ export default function TabsLayout() {
       if (!sessionString) return;
       const session = JSON.parse(sessionString);
       const userPhone = session?.phone_number;
+      const filter = userPhone ? `customer_phone=eq.${encodeURIComponent(userPhone)}` : undefined;
 
       subscription = supabase
         .channel('public:orders')
         .on(
           'postgres_changes',
-          { event: 'UPDATE', schema: 'public', table: 'orders' },
+          { event: 'UPDATE', schema: 'public', table: 'orders', filter },
           (payload) => {
             const oldStatus = payload.old?.status;
             const newStatus = payload.new?.status;

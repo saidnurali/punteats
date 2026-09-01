@@ -4,9 +4,9 @@
     "slug": "punteats",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/branding/punteats-icon.png",
     "notification": {
-      "icon": "./assets/images/icon.png",
+      "icon": "./assets/branding/punteats-icon.png",
       "color": "#1B7D3C",
       "iosDisplayInForeground": true
     },
@@ -17,9 +17,10 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "bundleIdentifier": "com.punteats.app",
-      "icon": "./assets/images/puntgo_logo.png",
+      "icon": "./assets/branding/punteats-icon.png",
       "supportsTablet": true,
       "buildNumber": "1",
+      "jsEngine": "hermes",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "PuntEats uses your location to track live food delivery and taxi rides.",
         "CFBundleURLTypes": [
@@ -35,21 +36,14 @@
       "package": "com.punteats.app",
       "versionCode": 1,
       "adaptiveIcon": {
-        "backgroundColor": "#FFFFFF",
-        "foregroundImage": "./assets/images/icon.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "foregroundImage": "./assets/branding/punteats-icon.png",
+        "backgroundColor": "#1B7D3C"
       },
       "notification": {
-        "icon": "./assets/images/icon.png",
+        "icon": "./assets/branding/punteats-icon.png",
         "color": "#1B7D3C"
       },
       "predictiveBackGestureEnabled": false,
-      "config": {
-        "googleMaps": {
-          "apiKey": "AIzaSyDTNF4ciSiD4suz_-pxjLDCTMtlmuiCK_I"
-        }
-      },
       "permissions": [
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_FINE_LOCATION"
@@ -58,30 +52,24 @@
     },
     "web": {
       "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/branding/punteats-icon.png"
     },
     "plugins": [
       "expo-router",
       [
         "expo-location",
         {
-          "locationAlwaysAndWhenInUsePermission": "Allow PuntEats to access your location for real-time tracking."
+          "locationAlwaysAndWhenInUsePermission": "Allow PuntEats to access your location to find your delivery address.",
+          "isAndroidBackgroundLocationEnabled": false,
+          "isIosBackgroundLocationEnabled": false
         }
       ],
       [
         "expo-splash-screen",
         {
           "backgroundColor": "#1B7D3C",
-          "image": "./assets/images/splash-icon.png",
+          "image": "./assets/branding/punteats-icon.png",
           "imageWidth": 200
-        }
-      ],
-      [
-        "@sentry/react-native/expo",
-        {
-          "url": "https://sentry.io/",
-          "project": "___YOUR_PROJECT_SLUG___",
-          "organization": "___YOUR_ORG_SLUG___"
         }
       ]
     ],
@@ -96,6 +84,12 @@
         "projectId": "9d477c26-e308-4b53-80c3-ed5c2df92d38"
       }
     },
-    "owner": "punteats"
+    "owner": "punteats",
+    "updates": {
+      "url": "https://u.expo.dev/9d477c26-e308-4b53-80c3-ed5c2df92d38"
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    }
   }
 }

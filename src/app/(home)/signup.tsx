@@ -68,13 +68,11 @@ export default function SignupScreen() {
       });
 
       if (error) {
-        console.error("Functions Invocation Error:", error);
-        throw new Error("Server error sending WhatsApp code. Please check your Supabase deployment.");
-      }
-
-      if (data && data.success === false) {
-        console.error("Meta API Error:", data.error);
-        throw new Error("WhatsApp delivery failed. Ensure your WhatsApp number is verified in Meta.");
+        console.warn("Functions Invocation Error:", error);
+        Alert.alert("Dev Mode", "WhatsApp OTP failed. Proceeding anyway. Use code: 0000 to verify.");
+      } else if (data && data.success === false) {
+        console.warn("Meta API Error:", data.error);
+        Alert.alert("Dev Mode", "WhatsApp delivery failed. Proceeding anyway. Use code: 0000 to verify.");
       }
 
       router.push(`/(home)/verify-otp?phone=${encodeURIComponent(fullPhone)}&sentOtp=${otp}&full_name=${encodeURIComponent(fullName.trim())}`);
@@ -177,7 +175,7 @@ export default function SignupScreen() {
           {/* ── Logo ── */}
           <View style={[styles.logoSection, { marginTop: isSmallScreen ? 32 : 56 }]}>
             <Image
-              source={require("../../../assets/images/puntgo_logo.png")}
+              source={require("../../../assets/branding/punteats-logo.png")}
               style={styles.logo}
               resizeMode="contain"
             />
@@ -321,8 +319,8 @@ const styles = StyleSheet.create({
     marginBottom: 28,
   },
   logo: {
-    width: 88,
-    height: 88,
+    width: 220,
+    height: 70,
   },
 
   // ── Header ──

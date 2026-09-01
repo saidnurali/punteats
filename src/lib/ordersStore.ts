@@ -41,57 +41,38 @@ const safeStorage = {
   }
 };
 
+/**
+ * Returns the locally cached orders (memory or disk).
+ * NEVER hits the network without a user filter — the Orders screen
+ * does its own user-scoped Supabase query. An unfiltered select("*")
+ * here would download every order from every user (security + perf issue).
+ */
 export async function getStoredOrders(): Promise<LiveOrder[]> {
+  if (memoryOrders.length > 0) return memoryOrders;
   try {
-    const { data, error } = await supabase
-      .from("orders")
-      .select("*")
-      .order("created_at", { ascending: false });
-
-    if (error || !data) {
-      // Fallback to safeStorage or memory if offline or error
-      const cached = await safeStorage.getItem(ORDERS_STORAGE_KEY);
-      return cached ? JSON.parse(cached) : memoryOrders;
+    const cached = await safeStorage.getItem(ORDERS_STORAGE_KEY);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      memoryOrders = parsed;
+      return parsed;
     }
+  } catch {}
+  return [];
+}
 
-    const mapped = data.map((o: any) => {
-      let itemsStr = "";
-      if (typeof o.items === "string") itemsStr = o.items;
-      else if (Array.isArray(o.items)) itemsStr = o.items.map((i: any) => `${i.quantity || 1}x ${i.name || i}`).join(", ");
-      else if (typeof o.items === "object" && o.items !== null) itemsStr = o.items.summary || JSON.stringify(o.items);
+/** Called by Orders screen after a successful filtered network fetch to update the shared cache. */
+export function setMemoryOrders(orders: LiveOrder[]): void {
+  memoryOrders = orders;
+  safeStorage.setItem(ORDERS_STORAGE_KEY, JSON.stringify(orders)).catch(() => {});
+}
 
-      const totalNum = typeof o.total_price === "number" ? o.total_price : parseFloat(o.total_price) || 0;
-      return {
-        id: o.order_number || o.id,
-        dbId: o.id,
-        customerName: o.customer_name || "Customer",
-        restaurant: o.restaurant_name || "Pizza House",
-        items: itemsStr || "Order items",
-        address: o.delivery_address || "Garowe, Puntland",
-        total: `$${totalNum.toFixed(2)}`,
-        status: (o.status as LiveOrder["status"]) || "Pending",
-        time: o.created_at ? new Date(o.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Just now",
-        phone: o.customer_phone || "+252 90 7000000",
-        paymentMethod: o.payment_method || "Cash on Delivery",
-        createdAt: o.created_at ? new Date(o.created_at).getTime() : Date.now(),
-        deliveryFee: "$1.50",
-        subtotal: `$${Math.max(0, totalNum - 1.5).toFixed(2)}`,
-        driver: o.driver || undefined,
-        rejectionReason: o.rejection_reason || undefined,
-      };
-    });
-
-    memoryOrders = mapped;
-    await safeStorage.setItem(ORDERS_STORAGE_KEY, JSON.stringify(mapped));
-    return mapped;
-  } catch (error) {
-    try {
-      const cached = await safeStorage.getItem(ORDERS_STORAGE_KEY);
-      return cached ? JSON.parse(cached) : memoryOrders;
-    } catch {
-      return memoryOrders;
-    }
-  }
+/** Called on logout to completely wipe the current user's orders from memory and disk. */
+export async function clearStoredOrders(): Promise<void> {
+  memoryOrders = [];
+  try {
+    await AsyncStorage.removeItem(ORDERS_STORAGE_KEY);
+    await AsyncStorage.removeItem('@cached_my_orders'); // Wipe legacy cache as well just in case
+  } catch {}
 }
 
 export async function saveNewOrder(order: LiveOrder): Promise<LiveOrder[]> {

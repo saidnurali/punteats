@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Platform } from "react-native";
-import { Product, mapFoodItemToProduct } from "@/lib/products";
+import { Product, PRODUCTS_DATA } from "@/lib/products";
 import { supabase } from "@/lib/supabase";
 
 interface WishlistContextType {
@@ -59,23 +59,40 @@ export const WishlistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           if (parsed.length > 0) setWishlistItems(parsed);
         }
 
-        // 2. Sync from Supabase in background without blocking UI
+        // 2. Sync wishlist product IDs from Supabase
         const storedSession = await safeStorage.getItem("puntgo_user_session");
         if (storedSession) {
           const user = JSON.parse(storedSession);
           if (user?.id) {
             const { data } = await supabase
               .from('wishlist')
-              .select('id, product:food_items(*, restaurant:restaurants(name))')
+              .select('product_id, food_items(*, restaurants(id, name, delivery_fee))')
               .eq('user_id', user.id);
 
-            if (data) {
-              const fetchedItems = data
-                .map((d: any) => d.product ? mapFoodItemToProduct(d.product) : null)
-                .filter(Boolean) as Product[];
+            if (data && data.length > 0) {
+              const resolved = data.map((d: any) => {
+                if (!d.food_items) return null;
+                const fi = d.food_items;
+                return {
+                  id: String(fi.id),
+                  name: fi.name,
+                  price: fi.price,
+                  rating: fi.rating ? String(fi.rating) : "0",
+                  calories: fi.calories || "",
+                  time: fi.prep_time || "20-30 min",
+                  description: fi.description || "",
+                  image: fi.image_url || fi.images?.[0] || "",
+                  category_id: fi.category_id || "",
+                  restaurant_id: fi.restaurant_id || "",
+                  restaurant_name: fi.restaurants?.name || "Restaurant",
+                  delivery_fee: fi.restaurants?.delivery_fee || 0,
+                  variants: fi.variants || [],
+                  add_ons: fi.add_ons || [],
+                };
+              }).filter(Boolean);
 
-              if (fetchedItems.length > 0) {
-                setWishlistItems(fetchedItems);
+              if (resolved.length > 0) {
+                setWishlistItems(resolved as any[]);
               }
             }
           }

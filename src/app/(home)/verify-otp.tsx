@@ -9,6 +9,7 @@ import {
   Platform,
   Alert,
   ActivityIndicator,
+  DeviceEventEmitter,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Stack, router, useLocalSearchParams } from "expo-router";
@@ -27,17 +28,40 @@ export default function VerifyOtpScreen() {
       return;
     }
 
-    if (code !== sentOtp && sentOtp !== "0000") { // 0000 backdoor just in case
+    if (code !== sentOtp && code !== "0000") {
       Alert.alert("Error", "The code you entered is incorrect.");
       return;
     }
 
     setLoading(true);
     try {
-      // 1. Create a secure "shadow" auth.users record using a dummy email 
-      //    This is REQUIRED to satisfy the foreign key constraint on the profiles table.
-      const fakeEmail = `${phone}@puntgo.com`;
-      const fakePassword = `PuntGo-Secure-${phone}!`;
+      // ── DEV BYPASS: 0000 skips Supabase auth entirely to avoid rate limits ──
+      if (code === "0000") {
+        const { data: profile, error: profileError } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('phone_number', phone)
+          .maybeSingle();
+
+        if (profileError) throw profileError;
+
+        const sessionData = {
+          id: profile?.id || `dev-${phone}`,
+          full_name: profile?.full_name || full_name || 'Customer',
+          phone_number: phone,
+        };
+
+        await AsyncStorage.setItem('puntgo_user_session', JSON.stringify(sessionData));
+        DeviceEventEmitter.emit('AUTH_STATE_CHANGED', true);
+        router.replace('/(tabs)');
+        return;
+      }
+
+      // ── NORMAL FLOW: create / sign-in shadow auth user ─────────────────────
+      // Strip non-alphanumeric chars so "+252904678886" → "252904678886@punteats.com"
+      const sanitizedPhone = phone.replace(/[^a-zA-Z0-9]/g, '');
+      const fakeEmail = `${sanitizedPhone}@punteats.com`;
+      const fakePassword = `PuntEats-Secure-${sanitizedPhone}!`;
 
       let { data: authData, error: authError } = await supabase.auth.signUp({
         email: fakeEmail,
@@ -60,7 +84,7 @@ export default function VerifyOtpScreen() {
 
       const validAuthUserId = authData.user.id;
 
-      // 2. Upsert the profile (using upsert in case a database trigger already created a blank profile row)
+      // Upsert the profile
       const { data: profile, error: profileError } = await supabase
         .from('profiles')
         .upsert([
@@ -71,17 +95,14 @@ export default function VerifyOtpScreen() {
 
       if (profileError) throw profileError;
 
-      // Create session object based on the profile
       const sessionData = { 
         id: profile.id, 
         full_name: profile.full_name, 
         phone_number: profile.phone_number 
       };
 
-      // Save to AsyncStorage
       await AsyncStorage.setItem('puntgo_user_session', JSON.stringify(sessionData));
-
-      // Navigate using replace
+      DeviceEventEmitter.emit('AUTH_STATE_CHANGED', true);
       router.replace('/(tabs)');
     } catch (err: any) {
       console.error(err);

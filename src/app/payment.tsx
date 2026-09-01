@@ -11,18 +11,23 @@ import {
   Animated,
   Alert,
   ActivityIndicator,
+  TextInput,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useLocalSearchParams } from "expo-router";
-import { getStoredOrders, addOrder } from "@/lib/ordersStore";
+import { getStoredOrders, setMemoryOrders } from "@/lib/ordersStore";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useCart } from "@/lib/CartContext";
 import { supabase } from "@/lib/supabase";
 
+const isValidUUID = (uuid: any) => {
+  return typeof uuid === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(uuid);
+};
+
 export default function PaymentSelectionScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ total?: string; address?: string }>();
+  const params = useLocalSearchParams<{ total?: string; address?: string; special_instructions?: string }>();
   const { cartItems, totalPrice, clearCart } = useCart();
 
   const deliveryFee = 1.5;
@@ -33,9 +38,9 @@ export default function PaymentSelectionScreen() {
   const [placedOrderId, setPlacedOrderId] = useState("#PG123456");
   const [dbOrderId, setDbOrderId] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [mobileNumber, setMobileNumber] = useState("");
 
   // useRef prevents recreating Animated.Value on every render
-  // useState(new Animated.Value(0)) was calling `new Animated.Value` on EVERY render
   const scaleAnim = useRef(new Animated.Value(0.4)).current;
   const opacityAnim = useRef(new Animated.Value(0)).current;
 
@@ -48,105 +53,91 @@ export default function PaymentSelectionScreen() {
 
       let custName = "Customer";
       let custPhone = "+252 90 7112233";
-      let userId = undefined;
 
       const storedSession = await AsyncStorage.getItem('puntgo_user_session');
       if (storedSession) {
         const p = JSON.parse(storedSession);
         custName = p.full_name || "Customer";
         custPhone = p.phone_number || "+252 90 7112233";
-        userId = p.id;
       }
 
+      // Enforce authenticated user context for RLS
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user || !isValidUUID(user.id)) {
+        throw new Error("You must be logged in to place an order.");
+      }
+      const userId = user.id;
+
+      const uniqueRestaurants = [...new Set(cartItems.map(item => item.restaurant_name).filter(Boolean))];
+      let dynamicRestaurantName = cartItems[0]?.restaurant_name || (cartItems[0] as any)?.restaurant;
+      if (!dynamicRestaurantName && uniqueRestaurants.length > 0) dynamicRestaurantName = uniqueRestaurants.join(', ');
+      if (!dynamicRestaurantName) dynamicRestaurantName = 'Restaurant';
+
+      if (!dynamicRestaurantName || dynamicRestaurantName === 'PuntEats Restaurant') {
+        dynamicRestaurantName = 'Restaurant';
+      }
+
+      const realRestaurantId = cartItems[0]?.restaurant_id || null;
+      const itemsSummary = cartItems.map(item => `${item.quantity || 1}x ${item.name || "Item"}`).join(", ");
+
+      const restaurantName = cartItems[0]?.restaurant_name || (cartItems[0] as any)?.restaurant?.name || dynamicRestaurantName || 'Restaurant';
+      const restaurantId = realRestaurantId || cartItems[0]?.restaurant_id || (cartItems[0] as any)?.restaurant?.id;
+
+      const calculatedTotal = Number(computedTotal || 0);
+
+      const deliveryAddress = params.address || "Home • Garowe, Puntland, Somalia";
+      if (deliveryAddress === "Home • Garowe, Puntland, Somalia" || deliveryAddress.length < 5) {
+        throw new Error("Please go back and enter a valid, specific delivery address.");
+      }
+
+      if (!isValidUUID(restaurantId)) {
+        throw new Error("Invalid or missing Restaurant ID. Please clear cart and try again.");
+      }
+
+      // SAFE INSERTION: Only include columns that actually exist in the database schema!
       const orderPayload: any = {
         user_id: userId,
-        order_number: newId,
+        order_number: newId, 
+        restaurant_id: restaurantId,
+        restaurant_name: restaurantName,
         customer_name: custName,
         customer_phone: custPhone,
-        restaurant_name: cartItems[0]?.restaurantName || cartItems[0]?.category?.includes("Pizza") ? "Pizza House" : "Garowe Restaurant",
-        items: cartItems.map(item => ({ 
-          id: item.id, 
-          name: item.name, 
-          price: item.price, 
-          quantity: item.quantity, 
-          image: item.images?.[0] || item.image_url || item.image 
-        })),
-        total_price: computedTotal,
-        delivery_address: params.address || "Home • Garowe, Puntland, Somalia",
+        items: itemsSummary,
+        total_price: calculatedTotal,
+        delivery_address: deliveryAddress,
+        payment_method: selectedMethod || 'cash_on_delivery',
         status: 'Pending',
-        payment_method: selectedMethod,
         created_at: new Date().toISOString()
       };
 
-      if (cartItems[0]?.restaurant_id) {
-         orderPayload.restaurant_id = cartItems[0].restaurant_id;
+      console.log("Invoking server-side create-order function...");
+      const { data: responseData, error: invokeError } = await supabase.functions.invoke('create-order', {
+        body: { orderPayload, cartItems }
+      });
+
+      if (invokeError) {
+        throw new Error(invokeError.message === "Edge Function returned a non-2xx status code" 
+          ? "The server rejected the order (e.g., minimum order not met or invalid address). Please check your cart." 
+          : invokeError.message);
       }
 
-      // OPTIMISTIC UI: We start the network request, but we only wait a maximum of 1.2 seconds.
-      // If the network is slow, we pop the Success Modal anyway so the user doesn't wait forever!
-      const insertPromise = supabase.from('orders').insert([orderPayload]).select().single();
-      const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve({ timeout: true }), 1200));
-
-      const result = await Promise.race([insertPromise, timeoutPromise]) as any;
-      
-      if (result.error) {
-        console.error("Order insertion error:", result.error);
-        Alert.alert("Order Failed", result.error.message || "Failed to place order.");
-        setIsSubmitting(false);
-        return;
-      }
-      
-      if (result.data) {
-        setDbOrderId(result.data.id);
+      if (responseData?.error) {
+        throw new Error(responseData.error);
       }
 
-      // Catch the background promise if it finishes after the timeout
-      insertPromise.then(({ data, error }) => {
-        if (data && !result.data) setDbOrderId(data.id);
-      }).catch(() => null);
+      const newOrder = responseData?.data;
 
-      // Optimistically inject the new order into the cache so the Orders tab is instant
-      try {
-        const cached = await AsyncStorage.getItem('@cached_my_orders');
-        let currentOrders = cached ? JSON.parse(cached) : [];
-        
-        let itemsStr = "Order items";
-        if (cartItems.length > 0) {
-          itemsStr = cartItems.map(i => `${i.quantity || 1}x ${i.name}`).join(", ");
-        }
-
-        const newMappedOrder = {
-          id: orderPayload.order_number,
-          dbId: result.data?.id || 'temp-id',
-          customerName: orderPayload.customer_name,
-          restaurant: orderPayload.restaurant_name,
-          items: itemsStr,
-          address: orderPayload.delivery_address,
-          total: `$${computedTotal.toFixed(2)}`,
-          status: 'Pending',
-          time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-          phone: orderPayload.customer_phone,
-          paymentMethod: orderPayload.payment_method,
-          createdAt: Date.now(),
-          deliveryFee: "$1.50",
-          subtotal: `$${Math.max(0, computedTotal - 1.5).toFixed(2)}`
-        };
-
-        currentOrders.unshift(newMappedOrder);
-        await AsyncStorage.setItem('@cached_my_orders', JSON.stringify(currentOrders));
-      } catch (err) {
-        console.warn('Failed to optimistically cache order', err);
+      if (newOrder && newOrder.id) {
+        setDbOrderId(newOrder.id);
       }
 
-      clearCart();
-
+      setPlacedOrderId(newId);
       setSuccessModalVisible(true);
       Animated.parallel([
         Animated.spring(scaleAnim, { toValue: 1, friction: 5, tension: 50, useNativeDriver: true }),
         Animated.timing(opacityAnim, { toValue: 1, duration: 250, useNativeDriver: true }),
       ]).start();
     } catch (err: any) {
-      console.error("Unexpected order error:", err);
       Alert.alert("Error", err.message || "An unexpected error occurred.");
     } finally {
       setIsSubmitting(false);
@@ -155,17 +146,12 @@ export default function PaymentSelectionScreen() {
 
   const handleTrackMyOrder = () => {
     setSuccessModalVisible(false);
-    
-    // Dismiss checkout/payment stack and go to Orders tab first
-    if (router.canDismiss()) {
-      router.dismissAll();
+    clearCart(); // Clear cart ONLY when leaving the screen
+    if (dbOrderId) {
+      router.replace({ pathname: '/order-tracking/[id]', params: { id: dbOrderId } });
+    } else {
+      router.replace("/(tabs)/orders");
     }
-    router.replace('/(tabs)/orders');
-    
-    // Wait slightly for the tab to mount, then push the tracking page
-    setTimeout(() => {
-      router.push(`/order-details/${dbOrderId || placedOrderId.replace('#', '')}`);
-    }, 50);
   };
 
   return (
@@ -251,6 +237,26 @@ export default function PaymentSelectionScreen() {
           </View>
         </TouchableOpacity>
 
+        {/* Mobile Money Input Field (Conditional) */}
+        {selectedMethod === "Mobile Money" && (
+          <View style={styles.mobileMoneyInputContainer}>
+            <Text style={styles.mobileMoneyLabel}>Enter Mobile Money Number</Text>
+            <View style={styles.mobileMoneyInputWrapper}>
+              <Text style={styles.mobileMoneyPrefix}>+252</Text>
+              <TextInput
+                style={styles.mobileMoneyInput}
+                placeholder="90 7000000"
+                placeholderTextColor="#9CA3AF"
+                keyboardType="phone-pad"
+                value={mobileNumber}
+                onChangeText={setMobileNumber}
+                maxLength={9}
+              />
+            </View>
+            <Text style={styles.mobileMoneyHelp}>You will receive a prompt on this number to confirm payment.</Text>
+          </View>
+        )}
+
         {/* 3. Card Payment */}
         <TouchableOpacity
           style={[styles.paymentCard, selectedMethod === "Card Payment" && styles.paymentCardActive]}
@@ -291,6 +297,9 @@ export default function PaymentSelectionScreen() {
           activeOpacity={0.88} 
           onPress={handlePlaceOrder}
           disabled={isSubmitting}
+          accessible={true}
+          accessibilityRole="button"
+          accessibilityLabel="Place Order"
         >
           {isSubmitting ? (
             <ActivityIndicator color="#FFFFFF" size="small" />
@@ -308,9 +317,11 @@ export default function PaymentSelectionScreen() {
               <Ionicons name="checkmark" size={54} color="#FFFFFF" />
             </View>
 
-            <Text style={styles.congratsTitle}>Congratulations!</Text>
+            <Text style={styles.congratsTitle}>Order Placed Successfully!</Text>
             <Text style={styles.congratsSub}>
-              Your order has been placed successfully and sent to PuntGo Admin.
+              {selectedMethod === "Mobile Money" 
+                ? "Your order is confirmed. A payment request will be sent to your phone shortly."
+                : "Your order has been sent to the restaurant and will be delivered shortly."}
             </Text>
 
             <View style={styles.orderDetailsBox}>
@@ -331,7 +342,7 @@ export default function PaymentSelectionScreen() {
             </View>
 
             <TouchableOpacity style={styles.trackOrderBtn} activeOpacity={0.88} onPress={handleTrackMyOrder}>
-              <Text style={styles.trackOrderBtnText}>Track My Order</Text>
+              <Text style={styles.trackOrderBtnText}>Track Order</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -339,10 +350,11 @@ export default function PaymentSelectionScreen() {
               activeOpacity={0.8}
               onPress={() => {
                 setSuccessModalVisible(false);
+                clearCart(); // Clear cart ONLY when leaving the screen
                 router.replace("/(tabs)");
               }}
             >
-              <Text style={styles.backHomeBtnText}>Back to Home</Text>
+              <Text style={styles.backHomeBtnText}>Browse Food / Back to Home</Text>
             </TouchableOpacity>
           </Animated.View>
         </View>
@@ -451,12 +463,54 @@ const styles = StyleSheet.create({
   comingSoonTag: {
     fontSize: 11.5,
     fontWeight: "700",
-    color: "#1B7D3C",
-    backgroundColor: "#DCFCE7",
+    color: "#F5A623",
+    backgroundColor: "#FEF3C7",
     paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
     marginRight: 10,
+    overflow: "hidden",
+  },
+  mobileMoneyInputContainer: {
+    backgroundColor: "#F0FDF4",
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#1B7D3C",
+    marginTop: -4,
+    marginBottom: 14,
+  },
+  mobileMoneyLabel: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#1B7D3C",
+    marginBottom: 8,
+  },
+  mobileMoneyInputWrapper: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FFFFFF",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#D1D5DB",
+    paddingHorizontal: 12,
+  },
+  mobileMoneyPrefix: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#1A1A1A",
+    marginRight: 8,
+  },
+  mobileMoneyInput: {
+    flex: 1,
+    height: 48,
+    fontSize: 16,
+    color: "#1A1A1A",
+  },
+  mobileMoneyHelp: {
+    fontSize: 12,
+    color: "#6B6B6B",
+    marginTop: 8,
   },
   bottomStickyBar: {
     flexDirection: "row",

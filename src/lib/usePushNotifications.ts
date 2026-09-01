@@ -30,8 +30,8 @@ export const usePushNotifications = (): PushNotificationState => {
   const [expoPushToken, setExpoPushToken] = useState<Notifications.ExpoPushToken | undefined>();
   const [notification, setNotification] = useState<Notifications.Notification | undefined>();
 
-  const notificationListener = useRef<Notifications.Subscription>();
-  const responseListener = useRef<Notifications.Subscription>();
+  const notificationListener = useRef<Notifications.Subscription | undefined>(undefined);
+  const responseListener = useRef<Notifications.Subscription | undefined>(undefined);
 
   async function registerForPushNotificationsAsync() {
     if (Platform.OS === 'android' && Constants.appOwnership === 'expo') {
@@ -58,7 +58,7 @@ export const usePushNotifications = (): PushNotificationState => {
         finalStatus = status;
       }
       if (finalStatus !== 'granted') {
-        console.log('Failed to get push token for push notification!');
+        console.warn('Failed to get push token for push notification - permission denied.');
         return;
       }
       
@@ -75,7 +75,7 @@ export const usePushNotifications = (): PushNotificationState => {
         console.error("Error getting Expo push token", e);
       }
     } else {
-      console.log('Must use physical device for Push Notifications');
+      console.warn('Must use physical device for Push Notifications');
     }
 
     return token;
@@ -89,7 +89,24 @@ export const usePushNotifications = (): PushNotificationState => {
     });
 
     responseListener.current = Notifications.addNotificationResponseReceivedListener((response) => {
-      console.log('Notification Response:', response);
+      const data = response.notification.request.content.data;
+      if (data) {
+        // If the payload specifies a URL/path, use expo-router to navigate
+        if (data.url) {
+          import('expo-router').then(({ router }) => {
+            // Slight delay ensures navigation stack is ready if app was backgrounded
+            setTimeout(() => {
+              router.push(data.url as any);
+            }, 100);
+          });
+        } else if (data.order_id) {
+          import('expo-router').then(({ router }) => {
+            setTimeout(() => {
+              router.push(`/order-details/${data.order_id}` as any);
+            }, 100);
+          });
+        }
+      }
     });
 
     return () => {

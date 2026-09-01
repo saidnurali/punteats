@@ -5,6 +5,7 @@ import { Product } from "@/lib/products";
 
 export interface CartItem extends Product {
   quantity: number;
+  cartItemId?: string;
 }
 
 interface CartContextType {
@@ -12,6 +13,7 @@ interface CartContextType {
   totalItems: number;
   totalPrice: number;
   addToCart: (product: Product, quantity?: number) => void;
+  bulkAddToCart: (items: CartItem[]) => void;
   updateQuantity: (id: string, delta: number) => void;
   removeFromCart: (id: string) => void;
   clearCart: () => void;
@@ -59,11 +61,13 @@ const safeStorage = {
 
 const CartContext = createContext<CartContextType | undefined>(undefined);
 
-/** Stable cart key — avoids JSON.stringify on every addToCart call */
+/** Stable cart key — uses id-variant-addons format */
 function cartItemKey(id: string, variant?: any, addOns?: any[]): string {
-  const variantKey = variant?.name ?? '';
-  const addOnKey = Array.isArray(addOns) ? addOns.map(a => a.name).join(',') : '';
-  return `${id}::${variantKey}::${addOnKey}`;
+  const variantKey = variant?.name || 'default';
+  const addOnKey = Array.isArray(addOns) && addOns.length > 0 
+    ? [...addOns].map(a => a.name).sort().join('-') 
+    : '';
+  return `${id}-${variantKey}-${addOnKey}`;
 }
 
 export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -107,7 +111,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Fast string key comparison — avoids JSON.stringify on every call
       const newKey = cartItemKey(product.id, product.selectedVariant, product.selectedAddOns);
       const existingIndex = prevItems.findIndex(
-        (item) => cartItemKey(item.id, item.selectedVariant, item.selectedAddOns) === newKey
+        (item) => (item.cartItemId || cartItemKey(item.id, item.selectedVariant, item.selectedAddOns)) === newKey
       );
       if (existingIndex > -1) {
         const updated = [...prevItems];
@@ -126,7 +130,14 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
           });
         }
-        return [...prevItems, { ...product, price: basePrice, quantity }];
+        return [...prevItems, { 
+          ...product, 
+          cartItemId: newKey, 
+          price: basePrice, 
+          quantity,
+          restaurant_id: product.restaurant_id || undefined,
+          restaurant_name: product.restaurant_name || 'Restaurant' 
+        }];
       }
     });
   }, []);
@@ -135,7 +146,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setCartItems((prevItems) =>
       prevItems
         .map((item) => {
-          if (item.id === id) {
+          if ((item.cartItemId || item.id) === id) {
             const newQty = item.quantity + delta;
             return newQty > 0 ? { ...item, quantity: newQty } : null;
           }
@@ -146,11 +157,15 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const removeFromCart = useCallback((id: string) => {
-    setCartItems((prevItems) => prevItems.filter((item) => item.id !== id));
+    setCartItems((prevItems) => prevItems.filter((item) => (item.cartItemId || item.id) !== id));
   }, []);
 
   const clearCart = useCallback(() => {
     setCartItems([]);
+  }, []);
+
+  const bulkAddToCart = useCallback((items: CartItem[]) => {
+    setCartItems(items);
   }, []);
 
   const totalItems = useMemo(() => cartItems.reduce((acc, item) => acc + item.quantity, 0), [cartItems]);
@@ -161,10 +176,11 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     totalItems,
     totalPrice,
     addToCart,
+    bulkAddToCart,
     updateQuantity,
     removeFromCart,
     clearCart,
-  }), [cartItems, totalItems, totalPrice, addToCart, updateQuantity, removeFromCart, clearCart]);
+  }), [cartItems, totalItems, totalPrice, addToCart, bulkAddToCart, updateQuantity, removeFromCart, clearCart]);
 
   return (
     <CartContext.Provider value={value}>

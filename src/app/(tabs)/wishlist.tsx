@@ -16,11 +16,13 @@ import { useRouter } from "expo-router";
 import Animated, { FadeInDown, FadeOut } from "react-native-reanimated";
 import { useWishlist } from "@/lib/WishlistContext";
 import { useCart } from "@/lib/CartContext";
+import { useLanguage } from "@/lib/LanguageContext";
 
 const { width } = Dimensions.get("window");
 
 export default function WishlistScreen() {
   const router = useRouter();
+  const { t } = useLanguage();
   const { wishlistItems, toggleWishlist } = useWishlist();
   const { addToCart } = useCart();
   const [toastMsg, setToastMsg] = useState("");
@@ -41,34 +43,7 @@ export default function WishlistScreen() {
 
   const validItems = wishlistItems.filter(item => item.price > 0 && (item.image || item.image_url));
 
-  if (wishlistItems.length === 0) {
-    return (
-      <Animated.View style={{ flex: 1, backgroundColor: "#F8F8F8" }} entering={FadeInDown.duration(400)}>
-        <SafeAreaView style={styles.container} edges={["top"]}>
-          <StatusBar barStyle="dark-content" />
-          <View style={styles.headerBar}>
-            <Text style={styles.headerTitle}>Wishlist</Text>
-          </View>
-          <View style={styles.emptyContainer}>
-            <View style={styles.emptyIconCircle}>
-              <Ionicons name="heart-outline" size={54} color="#1B7D3C" />
-            </View>
-            <Text style={styles.emptyTitle}>Your Wishlist is Empty</Text>
-            <Text style={styles.emptySubtitle}>
-              Explore top restaurants and save your favorite dishes here.
-            </Text>
-            <TouchableOpacity
-              style={styles.browseBtn}
-              activeOpacity={0.88}
-              onPress={() => router.push("/(tabs)")}
-            >
-              <Text style={styles.browseBtnText}>Browse Food</Text>
-            </TouchableOpacity>
-          </View>
-        </SafeAreaView>
-      </Animated.View>
-    );
-  }
+
 
   const renderWishlistItem = useCallback(({ item }: { item: any }) => {
     const safeImage = item.image || item.image_url;
@@ -111,7 +86,7 @@ export default function WishlistScreen() {
                 activeOpacity={0.85}
                 onPress={() => {
                   addToCart(item, 1);
-                  showToast("Added to Cart!");
+                  showToast(t("added_to_cart"));
                 }}
               >
                 <Ionicons name="add" size={18} color="#FFF" />
@@ -123,13 +98,42 @@ export default function WishlistScreen() {
     );
   }, [router, toggleWishlist, addToCart, showToast]);
 
+  if (wishlistItems.length === 0) {
+    return (
+      <Animated.View style={{ flex: 1, backgroundColor: "#F8F8F8" }} entering={FadeInDown.duration(400)}>
+        <SafeAreaView style={styles.container} edges={["top"]}>
+          <StatusBar barStyle="dark-content" />
+          <View style={styles.headerBar}>
+            <Text style={styles.headerTitle}>{t("wishlist")}</Text>
+          </View>
+          <View style={styles.emptyContainer}>
+            <View style={styles.emptyIconCircle}>
+              <Ionicons name="heart-outline" size={54} color="#1B7D3C" />
+            </View>
+            <Text style={styles.emptyTitle}>{t("wishlist_empty")}</Text>
+            <Text style={styles.emptySubtitle}>
+              {t("wishlist_empty_sub")}
+            </Text>
+            <TouchableOpacity
+              style={styles.browseBtn}
+              activeOpacity={0.88}
+              onPress={() => router.push("/(tabs)")}
+            >
+              <Text style={styles.browseBtnText}>{t("browse_food")}</Text>
+            </TouchableOpacity>
+          </View>
+        </SafeAreaView>
+      </Animated.View>
+    );
+  }
+
   return (
     <Animated.View style={{ flex: 1, backgroundColor: "#F8F8F8" }} entering={FadeInDown.duration(400)}>
       <SafeAreaView style={styles.container} edges={["top"]}>
         <StatusBar barStyle="dark-content" />
 
         <View style={styles.headerBar}>
-          <Text style={styles.headerTitle}>Wishlist</Text>
+          <Text style={styles.headerTitle}>{t("wishlist")}</Text>
           <View style={styles.headerBadge}>
             <Text style={styles.headerBadgeText}>{validItems.length}</Text>
           </View>
