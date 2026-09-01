@@ -55,7 +55,9 @@ export default function OrderTrackingScreen() {
   const initialOrder = orderData ? JSON.parse(orderData) : null;
   const [order, setOrder] = useState<any>(initialOrder);
   const [loading, setLoading] = useState(!initialOrder);
+  const [driverDetails, setDriverDetails] = useState<{name: string; phone: string} | null>(null);
   const [driverLocation, setDriverLocation] = useState<{latitude: number, longitude: number, heading: number} | null>(null);
+  const lastKnownDriverLocation = useRef<{latitude: number, longitude: number, heading: number} | null>(null);
   const [userLocation, setUserLocation] = useState<{latitude: number, longitude: number} | null>(null);
   const [locationPermissionGranted, setLocationPermissionGranted] = useState<boolean | null>(null);
   const [distanceKm, setDistanceKm] = useState<number>(0);
@@ -146,6 +148,32 @@ export default function OrderTrackingScreen() {
     ).start();
   }, [pulseAnim]);
 
+  // ── Fetch driver details when driver_id becomes known ────────────────────
+  useEffect(() => {
+    const driverId = order?.driver_id;
+    if (!driverId) {
+      setDriverDetails(null);
+      return;
+    }
+    // Fetch from `drivers` table using the FK stored in orders.driver_id
+    supabase
+      .from('drivers')
+      .select('full_name, phone')
+      .eq('id', driverId)
+      .single()
+      .then(({ data, error }) => {
+        if (data && !error) {
+          setDriverDetails({ name: data.full_name, phone: data.phone });
+        } else {
+          // Graceful fallback: use the driver_name already denormalized on the order row
+          const fallbackName = order?.driver_name;
+          const fallbackPhone = order?.driver_phone;
+          if (fallbackName) setDriverDetails({ name: fallbackName, phone: fallbackPhone || '' });
+        }
+      });
+  }, [order?.driver_id]);
+
+  // ── Load order + subscribe to Realtime (order row + drivers table) ────────
   useEffect(() => {
     async function loadOrder() {
       if (!activeId) return;
@@ -155,7 +183,7 @@ export default function OrderTrackingScreen() {
 
       let query = supabase
         .from('orders')
-        .select('id, order_number, status, driver, driver_id, driver_latitude, driver_longitude, driver_heading, customer_name, customer_phone, items, total_price, delivery_address, restaurant_name, rejection_reason, created_at, user_id');
+        .select('id, order_number, status, driver, driver_id, driver_name, driver_phone, driver_latitude, driver_longitude, driver_heading, customer_name, customer_phone, items, total_price, delivery_address, restaurant_name, rejection_reason, created_at, user_id');
         
       if (isUUID) {
         query = query.eq('id', activeId);
@@ -163,61 +191,88 @@ export default function OrderTrackingScreen() {
         query = query.or(`order_number.eq.${normalizedNumber},order_number.eq.${activeId}`);
       }
 
-      const { data, error } = await query.single();
+      const { data } = await query.single();
       if (data) {
         setOrder(data);
         if (data.driver_latitude && data.driver_longitude) {
-          setDriverLocation({
+          const loc = {
             latitude: Number(data.driver_latitude),
             longitude: Number(data.driver_longitude),
             heading: Number(data.driver_heading || 0)
-          });
+          };
+          setDriverLocation(loc);
+          lastKnownDriverLocation.current = loc;
         }
       }
       setLoading(false);
     }
     loadOrder();
 
-    // Subscribe to realtime status changes
-    let channel: any = null;
-    if (activeId) {
-      const isUUID = activeId.length === 36 && activeId.includes('-');
-      const normalizedNumber = '#' + activeId.replace(/^#+/, '');
-      const filter = isUUID ? `id=eq.${activeId}` : `order_number=eq.${normalizedNumber}`;
-      
-      const channelName = `order_${activeId}_${Date.now()}`;
-      channel = supabase.channel(channelName)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'orders', filter }, 
+    if (!activeId) return;
+
+    const isUUID = activeId.length === 36 && activeId.includes('-');
+    const normalizedNumber = '#' + activeId.replace(/^#+/, '');
+    const orderFilter = isUUID ? `id=eq.${activeId}` : `order_number=eq.${normalizedNumber}`;
+    
+    // Channel 1: Subscribe to order row changes (status, driver_id, and embedded coords)
+    const orderChannel = supabase.channel(`order_track_${activeId}`)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'orders', filter: orderFilter }, 
         (payload) => {
           const newOrder = payload.new as any;
-          const normalizedNumber = '#' + activeId.replace(/^#+/, '');
-          
-          if (newOrder && (newOrder.id === activeId || newOrder.order_number === activeId || newOrder.order_number === normalizedNumber)) {
-            if (newOrder.status) {
-              setOrder((prev: any) => ({ ...prev, ...newOrder }));
-            }
-            if (newOrder.driver_latitude && newOrder.driver_longitude) {
-              setDriverLocation({
-                latitude: Number(newOrder.driver_latitude),
-                longitude: Number(newOrder.driver_longitude),
-                heading: Number(newOrder.driver_heading || 0)
-              });
-            }
+          setOrder((prev: any) => ({ ...prev, ...newOrder }));
+
+          // If driver coords are embedded on the order row, update live
+          if (newOrder.driver_latitude && newOrder.driver_longitude) {
+            const loc = {
+              latitude: Number(newOrder.driver_latitude),
+              longitude: Number(newOrder.driver_longitude),
+              heading: Number(newOrder.driver_heading || 0)
+            };
+            setDriverLocation(loc);
+            lastKnownDriverLocation.current = loc;
           }
         }
       ).subscribe();
-    }
 
     return () => {
-      if (channel) {
-        supabase.removeChannel(channel);
-      }
+      supabase.removeChannel(orderChannel);
     };
   }, [activeId]);
 
+  // Channel 2: Watch the `drivers` table for live GPS coord updates
+  // (The Driver App writes to drivers.current_lat/lng via LocationService.ts)
+  useEffect(() => {
+    const driverId = order?.driver_id;
+    if (!driverId) return;
+
+    const driverChannel = supabase.channel(`driver_loc_${driverId}`)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'drivers', filter: `id=eq.${driverId}` },
+        (payload) => {
+          const d = payload.new as any;
+          if (d.current_lat && d.current_lng) {
+            const loc = {
+              latitude: Number(d.current_lat),
+              longitude: Number(d.current_lng),
+              heading: Number(d.heading || 0)
+            };
+            setDriverLocation(loc);
+            lastKnownDriverLocation.current = loc;
+          }
+        }
+      ).subscribe();
+
+    return () => {
+      supabase.removeChannel(driverChannel);
+    };
+  }, [order?.driver_id]);
+
   const handleCallDriver = () => {
-    const phone = order?.driver_phone || "+252907112233";
-    const driverName = order?.driver_name || "PuntEats Dispatch";
+    const phone = driverDetails?.phone || order?.driver_phone || "";
+    const driverName = driverDetails?.name || order?.driver_name || "Driver";
+    if (!phone) {
+      Alert.alert("No Driver Yet", "A driver has not been assigned to your order yet. Please wait or contact support.");
+      return;
+    }
     Alert.alert(
       "Calling Driver 📞",
       `Connecting to ${driverName} at ${phone}...`,
@@ -234,6 +289,7 @@ export default function OrderTrackingScreen() {
       ]
     );
   };
+
 
   const handleCallSupport = () => {
     Alert.alert(
@@ -313,7 +369,8 @@ export default function OrderTrackingScreen() {
   const restLat = parseCoord(order?.restaurant_lat, order?.restaurant_latitude, GAROWE_LAT);
   const restLng = parseCoord(order?.restaurant_lng, order?.restaurant_longitude, GAROWE_LNG);
 
-  const liveDriver = driverLocation || null;
+  // Use live location if available, otherwise show last known (graceful fallback)
+  const liveDriver = driverLocation || lastKnownDriverLocation.current || null;
 
   // Safely parse JSON items (MUST BE ABOVE EARLY RETURNS TO OBEY RULES OF HOOKS)
   const parsedItems = React.useMemo(() => {
@@ -654,15 +711,19 @@ export default function OrderTrackingScreen() {
                   <View style={[styles.stepLine, currentStep >= 3 ? styles.stepLineActive : styles.stepLineInactive]} />
                 </View>
                 <View style={styles.stepContent}>
-                  <View style={{ flexDirection: "row", alignItems: "center" }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap" }}>
                     <Text style={[styles.stepTitle, currentStep >= 2 ? styles.stepTitleActive : styles.stepTitleInactive]}>
                       Out for Delivery
                     </Text>
-                    {order?.driver_name && (
+                    {driverDetails?.name ? (
                       <View style={styles.driverBadge}>
-                        <Text style={styles.driverBadgeText}>🛵 {order.driver_name}</Text>
+                        <Text style={styles.driverBadgeText}>🛵 {driverDetails.name}</Text>
                       </View>
-                    )}
+                    ) : order?.driver_id ? (
+                      <View style={[styles.driverBadge, { backgroundColor: '#FEF3C7' }]}>
+                        <Text style={[styles.driverBadgeText, { color: '#92400E' }]}>🔄 Loading driver...</Text>
+                      </View>
+                    ) : null}
                   </View>
                   <Text style={[styles.stepTime, currentStep >= 2 ? styles.stepTimeActive : styles.stepTimeInactive]}>
                     {currentStep >= 2 ? "On The Way with Driver" : "-"}
@@ -726,7 +787,7 @@ export default function OrderTrackingScreen() {
                     coordinate={{ latitude: liveDriver.latitude, longitude: liveDriver.longitude }}
                     anchor={{ x: 0.5, y: 0.5 }}
                     rotation={liveDriver.heading}
-                    title={order?.driver_name || "Driver"}
+                    title={driverDetails?.name || order?.driver_name || "Driver"}
                   >
                     <View style={styles.scooterPin}>
                       <Ionicons color="#1B7D3C" name="bicycle" size={24} />
@@ -748,6 +809,18 @@ export default function OrderTrackingScreen() {
               </MapView>
 
               {/* FLOATING LIVE KM CARD */}
+              {/* Show "Searching for driver" pill when no driver yet */}
+              {!order?.driver_id && (
+                <View style={{ position: 'absolute', top: 12, left: 12, right: 12, backgroundColor: 'rgba(255,255,255,0.95)', borderRadius: 12, padding: 10, flexDirection: 'row', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 4 }}>
+                  <Animated.View style={{ transform: [{ scale: pulseAnim }], marginRight: 10 }}>
+                    <Ionicons name="locate" size={20} color="#F5A623" />
+                  </Animated.View>
+                  <View>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#1A1A1A' }}>Searching for nearest driver...</Text>
+                    <Text style={{ fontSize: 11, color: '#6B6B6B', marginTop: 2 }}>You'll be notified when a driver accepts</Text>
+                  </View>
+                </View>
+              )}
               <View style={styles.floatingCard}>
                 <View>
                   <Text style={styles.cardTitle}>{distanceKm} km away</Text>
@@ -795,7 +868,7 @@ export default function OrderTrackingScreen() {
         onClose={handleCloseChat}
         orderId={(activeId as string)?.replace(/^#+/, '')}
         customerName={order?.customer_name || 'Customer'}
-        driverName={order?.driver_name || 'Driver'}
+        driverName={driverDetails?.name || order?.driver_name || 'Driver'}
       />
     </SafeAreaView>
   );

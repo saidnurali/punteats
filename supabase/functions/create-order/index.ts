@@ -56,7 +56,7 @@ serve(async (req) => {
     }
 
     // ─── 2. Server-Side Price Verification ───
-    let calculatedTotal = 0;
+    let serverCalculatedSubtotal = 0;
     let serverItems = [];
 
     for (const item of cartItems) {
@@ -65,28 +65,52 @@ serve(async (req) => {
 
       const { data: dbItem, error: fetchError } = await supabaseClient
         .from('food_items')
-        .select('price, name')
+        .select('price, name, variants, add_ons')
         .eq('id', foodId)
         .eq('availability', 'In Stock')
         .single();
 
       if (fetchError || !dbItem) {
         return new Response(JSON.stringify({ error: `Item '${item.name}' is no longer available.` }), {
-          status: 200,
+          status: 400,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
 
-      // Calculate extras if any (in a full production system, variant IDs should be fetched and verified too)
-      let extrasCost = 0;
-      if (item.selectedVariant) extrasCost += (Number(item.selectedVariant.price) || 0);
-      if (item.selectedAddOns && Array.isArray(item.selectedAddOns)) {
-        item.selectedAddOns.forEach((a: any) => extrasCost += (Number(a.price) || 0));
+      let itemTruePrice = Number(dbItem.price) || 0;
+
+      // Validate Variant (replaces base price)
+      if (item.selectedVariant) {
+        const dbVariants = Array.isArray(dbItem.variants) ? dbItem.variants : [];
+        const variantName = item.selectedVariant.name || item.selectedVariant.option_name;
+        const matchedVariant = dbVariants.find((v: any) => (v.name || v.option_name) === variantName);
+        
+        if (!matchedVariant) {
+          return new Response(JSON.stringify({ error: `Variant '${variantName}' for '${dbItem.name}' is invalid or unavailable.` }), { 
+            status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+          });
+        }
+        itemTruePrice = Number(matchedVariant.price) || 0;
       }
 
-      const itemTruePrice = dbItem.price + extrasCost;
+      // Validate Add-ons (adds to base/variant price)
+      if (item.selectedAddOns && Array.isArray(item.selectedAddOns)) {
+        const dbAddons = Array.isArray(dbItem.add_ons) ? dbItem.add_ons : [];
+        for (const clientAddon of item.selectedAddOns) {
+          const addonName = clientAddon.name;
+          const matchedAddon = dbAddons.find((a: any) => a.name === addonName);
+          
+          if (!matchedAddon) {
+            return new Response(JSON.stringify({ error: `Add-on '${addonName}' for '${dbItem.name}' is invalid or unavailable.` }), { 
+              status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+            });
+          }
+          itemTruePrice += Number(matchedAddon.price) || 0;
+        }
+      }
+
       const quantity = item.quantity || 1;
-      calculatedTotal += (itemTruePrice * quantity);
+      serverCalculatedSubtotal += (itemTruePrice * quantity);
 
       serverItems.push({
         ...item,
@@ -95,9 +119,21 @@ serve(async (req) => {
       });
     }
 
+    const deliveryFee = Number(dbRestaurant.delivery_fee) || 1.5;
+    const finalServerTotal = serverCalculatedSubtotal + deliveryFee;
+
+    // Strict Tampering Check
+    if (Math.abs(finalServerTotal - Number(orderPayload.total_price)) > 0.05) {
+      return new Response(JSON.stringify({ error: "Price tampering detected or menu pricing has changed" }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     // ─── 3. Minimum Order Enforcement ───
-    if (dbRestaurant.min_order && calculatedTotal < dbRestaurant.min_order) {
+    if (dbRestaurant.min_order && serverCalculatedSubtotal < dbRestaurant.min_order) {
       return new Response(JSON.stringify({ error: `Order subtotal does not meet the restaurant minimum of $${dbRestaurant.min_order.toFixed(2)}.` }), {
+
         status: 200,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       })
