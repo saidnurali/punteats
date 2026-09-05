@@ -16,6 +16,7 @@ import { useRouter } from "expo-router";
 import Animated, { FadeInDown } from "react-native-reanimated";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "@/lib/supabase";
+import { getCurrentUser } from "@/lib/getCurrentUser";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Message {
@@ -102,11 +103,8 @@ export default function CustomerServiceChatScreen() {
 
   // Load user id from session
   useEffect(() => {
-    AsyncStorage.getItem("puntgo_user_session").then(raw => {
-      if (raw) {
-        const s = JSON.parse(raw);
-        if (s.id) setUserId(s.id);
-      }
+    getCurrentUser().then(profile => {
+      if (profile?.id) setUserId(profile.id);
     });
   }, []);
 

@@ -15,6 +15,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useFocusEffect } from "expo-router";
 import { getStoredOrders, LiveOrder, setMemoryOrders } from "@/lib/ordersStore";
 import { supabase } from "@/lib/supabase";
+import { getCurrentUser } from "@/lib/getCurrentUser";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Animated, { FadeIn } from "react-native-reanimated";
 import { useLanguage } from "@/lib/LanguageContext";
@@ -204,11 +205,10 @@ export default function OrdersScreen() {
     let userId;
     let userPhone;
     try {
-      const storedSession = await AsyncStorage.getItem('puntgo_user_session');
-      if (storedSession) {
-        const p = JSON.parse(storedSession);
-        userId = p.id;
-        userPhone = p.phone_number;
+      const profile = await getCurrentUser();
+      if (profile) {
+        userId = profile.id;
+        userPhone = profile.phone_number ?? undefined;
       }
     } catch {}
     
@@ -246,11 +246,10 @@ export default function OrdersScreen() {
         let userId: string | undefined;
         let userPhone: string | undefined;
         try {
-          const storedSession = await AsyncStorage.getItem('puntgo_user_session');
-          if (storedSession) {
-            const p = JSON.parse(storedSession);
-            userId = p.id;
-            userPhone = p.phone_number;
+          const profile = await getCurrentUser();
+          if (profile) {
+            userId = profile.id;
+            userPhone = profile.phone_number ?? undefined;
           }
         } catch {}
 
@@ -313,11 +312,10 @@ export default function OrdersScreen() {
       let userId: string | undefined;
       let userPhone: string | undefined;
       try {
-        const storedSession = await AsyncStorage.getItem('puntgo_user_session');
-        if (storedSession) {
-          const p = JSON.parse(storedSession);
-          userId = p.id;
-          userPhone = p.phone_number;
+        const profile = await getCurrentUser();
+        if (profile) {
+          userId = profile.id;
+          userPhone = profile.phone_number ?? undefined;
         }
       } catch {}
 

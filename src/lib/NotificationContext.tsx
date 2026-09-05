@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { supabase } from './supabase';
+import { getCurrentUser } from './getCurrentUser';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DeviceEventEmitter } from 'react-native';
 import * as Notifications from 'expo-notifications';
@@ -31,13 +32,10 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
 
   const fetchSession = async () => {
     try {
-      const sessionString = await AsyncStorage.getItem('puntgo_user_session');
-      if (sessionString) {
-        const session = JSON.parse(sessionString);
-        if (session?.id) {
-          setUserId(session.id);
-          return session.id;
-        }
+      const profile = await getCurrentUser();
+      if (profile) {
+        setUserId(profile.id);
+        return profile.id;
       }
       setUserId(null);
       setNotifications([]);

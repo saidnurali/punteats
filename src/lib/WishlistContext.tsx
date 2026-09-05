@@ -3,6 +3,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Platform } from "react-native";
 import { Product, PRODUCTS_DATA } from "@/lib/products";
 import { supabase } from "@/lib/supabase";
+import { getCurrentUser } from "@/lib/getCurrentUser";
 
 interface WishlistContextType {
   wishlistItems: Product[];
@@ -60,14 +61,13 @@ export const WishlistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         }
 
         // 2. Sync wishlist product IDs from Supabase
-        const storedSession = await safeStorage.getItem("puntgo_user_session");
-        if (storedSession) {
-          const user = JSON.parse(storedSession);
-          if (user?.id) {
+        const profile = await getCurrentUser();
+        if (profile) {
+          {
             const { data } = await supabase
               .from('wishlist')
               .select('product_id, food_items(*, restaurants(id, name, delivery_fee))')
-              .eq('user_id', user.id);
+              .eq('user_id', profile.id);
 
             if (data && data.length > 0) {
               const resolved = data.map((d: any) => {
@@ -132,16 +132,15 @@ export const WishlistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     // Background Supabase sync — never blocks the UI
     try {
-      const storedSession = await safeStorage.getItem("puntgo_user_session");
-      if (storedSession) {
-        const user = JSON.parse(storedSession);
-        if (user?.id) {
+      const profile = await getCurrentUser();
+      if (profile) {
+        {
           // Use the Set snapshot for the correct pre-toggle state
           const wasInWishlist = wishlistSet.has(product.id);
           if (wasInWishlist) {
-            await supabase.from('wishlist').delete().eq('user_id', user.id).eq('product_id', product.id);
+            await supabase.from('wishlist').delete().eq('user_id', profile.id).eq('product_id', product.id);
           } else {
-            await supabase.from('wishlist').insert({ user_id: user.id, product_id: product.id });
+            await supabase.from('wishlist').insert({ user_id: profile.id, product_id: product.id });
           }
         }
       }

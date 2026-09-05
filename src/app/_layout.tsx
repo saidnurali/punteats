@@ -29,26 +29,25 @@ import * as SplashScreen from 'expo-splash-screen';
 SplashScreen.preventAutoHideAsync();
 
 function RootLayout() {
+  // Auth state now comes ONLY from Supabase Auth's real session — never
+  // from an AsyncStorage flag. This is the single source of truth used
+  // by every RLS policy in the database, so it must be the single source
+  // of truth here too.
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [initialized, setInitialized] = useState(false);
   const segments = useSegments();
   const router = useRouter();
 
   useEffect(() => {
-    const checkAuth = async () => {
-      // Check custom session
-      const storedProfile = await AsyncStorage.getItem('puntgo_user_session');
-      if (storedProfile) {
-        setIsAuthenticated(true);
-      } else {
-        setIsAuthenticated(false);
-      }
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setIsAuthenticated(!!session);
       setInitialized(true);
-      // Hide splash screen after layout settles
       setTimeout(() => { SplashScreen.hideAsync(); }, 50);
-    };
+    });
 
-    checkAuth();
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setIsAuthenticated(!!session);
+    });
 
     // Pre-warm the data cache in background so Home screen renders instantly
     import('@/lib/DataCache').then(({ fetchRestaurants, fetchAllProducts }) => {
@@ -62,11 +61,18 @@ function RootLayout() {
       "https://wsrv.nl/?url=pngimg.com/uploads/motorcycle/motorcycle_PNG3162.png&output=png"
     ]);
 
-    const authListener = DeviceEventEmitter.addListener('AUTH_STATE_CHANGED', (isAuth: boolean) => {
-      setIsAuthenticated(isAuth);
+    // Legacy event kept as a secondary trigger for any screen still
+    // emitting it — real state always comes from onAuthStateChange above,
+    // this just forces an immediate re-check rather than waiting for the
+    // Supabase listener to fire.
+    const legacyListener = DeviceEventEmitter.addListener('AUTH_STATE_CHANGED', () => {
+      supabase.auth.getSession().then(({ data: { session } }) => setIsAuthenticated(!!session));
     });
 
-    return () => authListener.remove();
+    return () => {
+      authListener.subscription.unsubscribe();
+      legacyListener.remove();
+    };
   }, []); // Run once on mount only — not on every tab change
 
   useEffect(() => {
@@ -74,14 +80,12 @@ function RootLayout() {
 
     const inAuthGroup = segments[0] === "(home)";
     const inTabsGroup = segments[0] === "(tabs)";
-    const isBypass = (globalThis as any).__BYPASS_AUTH__ === true;
+    // NOTE: __BYPASS_AUTH__ has been permanently removed. There is no
+    // code path anywhere in this app that skips real authentication.
 
-    // IF SESSION EXISTS (User logged in)
-    if ((isAuthenticated || isBypass) && inAuthGroup) {
+    if (isAuthenticated && inAuthGroup) {
       router.replace("/(tabs)");
-    }
-    // IF NO SESSION (User logged out)
-    else if (!isAuthenticated && !isBypass && inTabsGroup) {
+    } else if (!isAuthenticated && inTabsGroup) {
       router.replace("/(home)/login");
     }
   }, [isAuthenticated, initialized, segments]);

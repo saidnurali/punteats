@@ -20,6 +20,7 @@ import { getStoredOrders, setMemoryOrders } from "@/lib/ordersStore";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useCart } from "@/lib/CartContext";
 import { supabase } from "@/lib/supabase";
+import { getCurrentUser } from "@/lib/getCurrentUser";
 
 const isValidUUID = (uuid: any) => {
   return typeof uuid === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(uuid);
@@ -54,11 +55,10 @@ export default function PaymentSelectionScreen() {
       let custName = "Customer";
       let custPhone = "+252 90 7112233";
 
-      const storedSession = await AsyncStorage.getItem('puntgo_user_session');
-      if (storedSession) {
-        const p = JSON.parse(storedSession);
-        custName = p.full_name || "Customer";
-        custPhone = p.phone_number || "+252 90 7112233";
+      const currentProfile = await getCurrentUser();
+      if (currentProfile) {
+        custName = currentProfile.full_name || "Customer";
+        custPhone = currentProfile.phone_number || "+252 90 7112233";
       }
 
       // Enforce authenticated user context for RLS

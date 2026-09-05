@@ -17,6 +17,7 @@ import { useRouter } from "expo-router";
 import { useCart } from "@/lib/CartContext";
 import { saveNewOrder, LiveOrder } from "@/lib/ordersStore";
 import { supabase } from "../lib/supabase";
+import { getCurrentUser } from "@/lib/getCurrentUser";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getStoredOrders, setMemoryOrders } from "../lib/ordersStore";
 import { useLanguage } from "@/lib/LanguageContext";
@@ -86,12 +87,9 @@ export default function CheckoutScreen() {
       } catch (err) {}
     };
 
-    AsyncStorage.getItem('puntgo_user_session').then(stored => {
-      if (stored) {
-        const session = JSON.parse(stored);
-        if (session?.phone_number) setPhoneNumber(session.phone_number);
-        if (session?.id) fetchDefaultAddress(session.id);
-      }
+    getCurrentUser().then(profile => {
+      if (profile?.phone_number) setPhoneNumber(profile.phone_number);
+      if (profile?.id) fetchDefaultAddress(profile.id);
     }).catch(() => {});
   }, []);
 

@@ -15,95 +15,41 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Stack, router, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { supabase } from "../../lib/supabase";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 
 export default function VerifyOtpScreen() {
-  const { phone, sentOtp, full_name } = useLocalSearchParams<{ phone: string; sentOtp: string; full_name?: string }>();
+  // Note: no `sentOtp` param — the correct code never reaches the client.
+  // The code is generated, hashed, and verified entirely server-side by
+  // the send-otp / verify-otp Edge Functions.
+  const { phone, full_name } = useLocalSearchParams<{ phone: string; full_name?: string }>();
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
 
   const handleVerify = async () => {
-    if (code.trim().length !== 4) {
-      Alert.alert("Invalid Code", "Please enter a 4-digit code.");
-      return;
-    }
-
-    if (code !== sentOtp && code !== "0000") {
-      Alert.alert("Error", "The code you entered is incorrect.");
+    if (code.trim().length !== 6) {
+      Alert.alert("Invalid Code", "Please enter the 6-digit code.");
       return;
     }
 
     setLoading(true);
     try {
-      // ── DEV BYPASS: 0000 skips Supabase auth entirely to avoid rate limits ──
-      if (code === "0000") {
-        const { data: profile, error: profileError } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('phone_number', phone)
-          .maybeSingle();
+      const { data, error } = await supabase.functions.invoke("verify-otp", {
+        body: { phone, code: code.trim(), full_name },
+      });
 
-        if (profileError) throw profileError;
-
-        const sessionData = {
-          id: profile?.id || `dev-${phone}`,
-          full_name: profile?.full_name || full_name || 'Customer',
-          phone_number: phone,
-        };
-
-        await AsyncStorage.setItem('puntgo_user_session', JSON.stringify(sessionData));
-        DeviceEventEmitter.emit('AUTH_STATE_CHANGED', true);
-        router.replace('/(tabs)');
+      if (error) throw error;
+      if (!data?.success) {
+        Alert.alert("Verification Failed", data?.error || "The code you entered is incorrect.");
         return;
       }
 
-      // ── NORMAL FLOW: create / sign-in shadow auth user ─────────────────────
-      // Strip non-alphanumeric chars so "+252904678886" → "252904678886@punteats.com"
-      const sanitizedPhone = phone.replace(/[^a-zA-Z0-9]/g, '');
-      const fakeEmail = `${sanitizedPhone}@punteats.com`;
-      const fakePassword = `PuntEats-Secure-${sanitizedPhone}!`;
-
-      let { data: authData, error: authError } = await supabase.auth.signUp({
-        email: fakeEmail,
-        password: fakePassword,
+      const { error: sessionError } = await supabase.auth.setSession({
+        access_token: data.access_token,
+        refresh_token: data.refresh_token,
       });
+      if (sessionError) throw sessionError;
 
-      // If the auth user already exists (edge case), simply log them in
-      if (authError && authError.message.includes('already registered')) {
-        const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
-          email: fakeEmail,
-          password: fakePassword,
-        });
-        authData = signInData;
-        authError = signInError;
-      }
-
-      if (authError || !authData?.user) {
-        throw new Error(authError?.message || "Failed to create secure auth user.");
-      }
-
-      const validAuthUserId = authData.user.id;
-
-      // Upsert the profile
-      const { data: profile, error: profileError } = await supabase
-        .from('profiles')
-        .upsert([
-          { id: validAuthUserId, phone_number: phone, full_name: full_name || 'Customer' }
-        ])
-        .select()
-        .single();
-
-      if (profileError) throw profileError;
-
-      const sessionData = { 
-        id: profile.id, 
-        full_name: profile.full_name, 
-        phone_number: profile.phone_number 
-      };
-
-      await AsyncStorage.setItem('puntgo_user_session', JSON.stringify(sessionData));
       DeviceEventEmitter.emit('AUTH_STATE_CHANGED', true);
-      router.replace('/(tabs)');
+      router.replace("/(tabs)");
     } catch (err: any) {
       console.error(err);
       Alert.alert("Verification Failed", err.message || "An error occurred setting up your profile.");
@@ -125,15 +71,15 @@ export default function VerifyOtpScreen() {
 
         <View style={styles.content}>
           <Text style={styles.title}>Verify your number</Text>
-          <Text style={styles.subtitle}>Enter the 4-digit code sent to your WhatsApp at {phone}</Text>
+          <Text style={styles.subtitle}>Enter the 6-digit code sent to your WhatsApp at {phone}</Text>
 
           <View style={styles.inputContainer}>
             <TextInput
               style={styles.codeInput}
-              placeholder="0000"
+              placeholder="000000"
               placeholderTextColor="#AAAAAA"
               keyboardType="number-pad"
-              maxLength={4}
+              maxLength={6}
               value={code}
               onChangeText={setCode}
               autoFocus
@@ -141,10 +87,10 @@ export default function VerifyOtpScreen() {
           </View>
 
           <TouchableOpacity
-            style={[styles.verifyBtn, (code.length < 4 || loading) && styles.verifyBtnDisabled]}
+            style={[styles.verifyBtn, (code.length < 6 || loading) && styles.verifyBtnDisabled]}
             activeOpacity={0.8}
             onPress={handleVerify}
-            disabled={code.length < 4 || loading}
+            disabled={code.length < 6 || loading}
           >
             {loading ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.verifyBtnText}>Verify Code</Text>}
           </TouchableOpacity>
@@ -171,7 +117,7 @@ const styles = StyleSheet.create({
     textAlign: "center",
     borderBottomWidth: 2,
     borderBottomColor: "#1B7D3C",
-    width: 200,
+    width: 260,
     paddingBottom: 8,
   },
   verifyBtn: {

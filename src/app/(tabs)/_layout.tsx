@@ -6,6 +6,7 @@ import { useCart } from "@/lib/CartContext";
 import { usePushNotifications } from "@/lib/usePushNotifications";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "@/lib/supabase";
+import { getCurrentUser } from "@/lib/getCurrentUser";
 import { useEffect } from "react";
 import * as Notifications from "expo-notifications";
 import Constants from "expo-constants";
@@ -28,15 +29,12 @@ export default function TabsLayout() {
     async function savePushToken() {
       if (expoPushToken?.data) {
         try {
-          const sessionString = await AsyncStorage.getItem('puntgo_user_session');
-          if (sessionString) {
-            const session = JSON.parse(sessionString);
-            if (session?.id) {
-              await supabase
-                .from('profiles')
-                .update({ expo_push_token: expoPushToken.data })
-                .eq('id', session.id);
-            }
+          const profile = await getCurrentUser();
+          if (profile?.id) {
+            await supabase
+              .from('profiles')
+              .update({ expo_push_token: expoPushToken.data })
+              .eq('id', profile.id);
           }
         } catch (error) {
           console.error("Error saving push token to profile", error);
@@ -48,10 +46,9 @@ export default function TabsLayout() {
     // Frontend Realtime Fallback for Push Notifications
     let subscription: any = null;
     async function setupRealtimeListener() {
-      const sessionString = await AsyncStorage.getItem('puntgo_user_session');
-      if (!sessionString) return;
-      const session = JSON.parse(sessionString);
-      const userPhone = session?.phone_number;
+      const profile = await getCurrentUser();
+      if (!profile) return;
+      const userPhone = profile.phone_number;
       const filter = userPhone ? `customer_phone=eq.${encodeURIComponent(userPhone)}` : undefined;
 
       subscription = supabase

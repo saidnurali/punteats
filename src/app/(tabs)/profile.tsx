@@ -21,6 +21,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { supabase } from "../../lib/supabase";
+import { getCurrentUser } from "@/lib/getCurrentUser";
 import { useCart } from "@/lib/CartContext";
 import { clearStoredOrders } from "@/lib/ordersStore";
 import { useLanguage } from "../../lib/LanguageContext";
@@ -39,17 +40,14 @@ export default function ProfileScreen() {
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
 
   React.useEffect(() => {
-    // Load from local WhatsApp OTP session
-    AsyncStorage.getItem('puntgo_user_session').then((stored) => {
-      if (stored) {
-        const p = JSON.parse(stored);
-        setUserId(p.id || null);
+    getCurrentUser().then((p) => {
+      if (p) {
+        setUserId(p.id);
         setDisplayName(p.full_name || "Customer");
         setPhone(p.phone_number || "+252");
-        setEmail(p.email || "No email linked");
-        setAvatarUri(p.avatar_url || null);
+        setEmail("No email linked");
       } else {
-        // Fallback for demo
+        // Fallback for demo / logged-out preview
         setDisplayName("Garowe User");
         setPhone("+252 90 7123456");
         setEmail("garowe.user@punteats.so");
@@ -77,27 +75,33 @@ export default function ProfileScreen() {
     setEditModalVisible(true);
   };
 
-  const handleSaveProfile = () => {
+  const handleSaveProfile = async () => {
     if (!tempName.trim() || !tempPhone.trim()) {
       Alert.alert(t("error"), "Please enter your full name and +252 phone number.");
       return;
     }
+
+    // Persist to the real profiles table — a local-only save was silently
+    // lost on restart and never reflected in anything else that reads
+    // this profile (orders, checkout, etc).
+    if (userId) {
+      const { error } = await supabase
+        .from('profiles')
+        .update({
+          full_name: tempName.trim(),
+          phone_number: tempPhone.trim(),
+        })
+        .eq('id', userId);
+
+      if (error) {
+        Alert.alert(t("error"), "Failed to save profile changes. Please try again.");
+        return;
+      }
+    }
+
     setDisplayName(tempName.trim());
     setPhone(tempPhone.trim());
     setEmail(tempEmail.trim());
-
-    // Save back to the SAME key we load from — was saving to '@puntgo_user_profile'
-    // but loading from 'puntgo_user_session', so every edit was silently lost on restart.
-    AsyncStorage.getItem('puntgo_user_session').then(stored => {
-      const existing = stored ? JSON.parse(stored) : {};
-      AsyncStorage.setItem('puntgo_user_session', JSON.stringify({
-        ...existing,
-        full_name: tempName.trim(),
-        phone_number: tempPhone.trim(),
-        email: tempEmail.trim(),
-        avatar_url: avatarUri || existing.avatar_url,
-      }));
-    }).catch(() => {});
 
     setEditModalVisible(false);
     Alert.alert(t("profile_updated"), t("profile_saved"));
@@ -187,13 +191,10 @@ export default function ProfileScreen() {
 
   const handleLogout = async () => {
     try {
-      (global as any).__BYPASS_AUTH__ = false;
-      await AsyncStorage.removeItem('puntgo_user_session');
       await AsyncStorage.removeItem('@puntgo_cart_v2'); // Forcefully clear cart memory immediately
       await clearStoredOrders();
       await supabase.auth.signOut();
       clearCart();
-      DeviceEventEmitter.emit('AUTH_STATE_CHANGED', false);
       if (router.canDismiss()) router.dismissAll();
       router.replace("/(home)/login");
     } catch {
@@ -229,11 +230,8 @@ export default function ProfileScreen() {
               }
 
               // Proceed with local cleanup only after successful server deletion
-              (global as any).__BYPASS_AUTH__ = false;
-              await AsyncStorage.removeItem('puntgo_user_session');
               await supabase.auth.signOut();
               clearCart();
-              DeviceEventEmitter.emit('AUTH_STATE_CHANGED', false);
               if (router.canDismiss()) router.dismissAll();
               router.replace("/(home)/login");
             } catch (err) {

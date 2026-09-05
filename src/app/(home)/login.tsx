@@ -59,23 +59,23 @@ export default function LoginScreen() {
       }
 
       if (profile) {
-        // User exists! Generate and send OTP for verification
-        const otp = Math.floor(1000 + Math.random() * 9000).toString();
-        
-        const { data: whatsappData, error: whatsappError } = await supabase.functions.invoke('send-whatsapp-otp', {
-          body: { phone: fullPhone, otp }
+        // User exists! The OTP is generated, hashed, and stored entirely
+        // server-side by send-otp — no client-side code, no bypass.
+        const { data: sendData, error: sendError } = await supabase.functions.invoke('send-otp', {
+          body: { phone: fullPhone }
         });
 
-        if (whatsappError) {
-          console.warn("Functions Invocation Error:", whatsappError);
-          Alert.alert("Dev Mode", "WhatsApp OTP failed. Proceeding anyway. Use code: 0000 to verify.");
-        } else if (whatsappData && whatsappData.success === false) {
-          console.warn("Meta API Error:", whatsappData.error);
-          Alert.alert("Dev Mode", "WhatsApp delivery failed. Proceeding anyway. Use code: 0000 to verify.");
+        if (sendError) {
+          showError("⚠️ Serverka cilad baa ka dhacday. Dib u tijaabi.");
+          return;
+        }
+        if (sendData && sendData.success === false) {
+          showError("⚠️ WhatsApp code lama diri karin. Dib u tijaabi.");
+          return;
         }
 
         showSuccess("Fadlan geli code-ka laguugu soo diray WhatsApp.");
-        router.push(`/(home)/verify-otp?phone=${encodeURIComponent(fullPhone)}&sentOtp=${otp}&full_name=${encodeURIComponent(profile.full_name)}`);
+        router.push(`/(home)/verify-otp?phone=${encodeURIComponent(fullPhone)}&full_name=${encodeURIComponent(profile.full_name)}`);
       } else {
         // User does not exist (0 rows returned)
         showWarning("Fadlan isdiiwaangeli horta si aad account u samaysato.");
@@ -156,14 +156,9 @@ export default function LoginScreen() {
               role: 'customer' // ensure default role
             }, { onConflict: 'id' }).select().single();
 
-            const sessionData = {
-              id: user.id,
-              full_name: fullName,
-              phone_number: user.phone || '',
-              email: user.email || '',
-              avatar_url: avatarUrl,
-            };
-            await AsyncStorage.setItem('puntgo_user_session', JSON.stringify(sessionData));
+            // The Supabase Auth session (already set via setSession above)
+            // is now the single source of truth — no separate AsyncStorage
+            // session object is needed or written.
 
             DeviceEventEmitter.emit('AUTH_STATE_CHANGED', true);
             showSuccess("Waa lagu soo dhaweynayaa (Google)!");

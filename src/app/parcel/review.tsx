@@ -14,6 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createParcelOrder } from '@/lib/parcelService';
+import { getCurrentUser } from "@/lib/getCurrentUser";
 import { calculateParcelFee, PackageSize, PackageType } from '@/lib/parcelPricing';
 
 const GREEN = '#1B7D3C';
@@ -69,13 +70,11 @@ export default function ReviewParcelScreen() {
     setIsSubmitting(true);
 
     try {
-      const sessionStr = await AsyncStorage.getItem('puntgo_user_session');
-      if (!sessionStr) throw new Error('You must be logged in to send a parcel.');
-      const session = JSON.parse(sessionStr);
-      if (!session?.id) throw new Error('Session invalid. Please log in again.');
+      const profile = await getCurrentUser();
+      if (!profile) throw new Error('You must be logged in to send a parcel.');
 
       const parcel = await createParcelOrder({
-        customer_id: session.id,
+        customer_id: profile.id,
         pickup_address: pickupAddress,
         recipient_name: recipientName,
         recipient_phone: recipientPhone,

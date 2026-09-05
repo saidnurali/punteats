@@ -31,6 +31,7 @@ import { CATEGORIES, coffeeTeaIcon } from "@/lib/categoriesData";
 import { CategorySkeleton, FoodCardSkeleton, RestaurantSkeleton } from "@/components/SkeletonLoader";
 import { getCachedRestaurants, fetchRestaurants, fetchAllProducts, getCachedAllProducts } from "@/lib/DataCache";
 import { supabase } from "@/lib/supabase";
+import { getCurrentUser } from "@/lib/getCurrentUser";
 
 const { width } = Dimensions.get("window");
 
@@ -328,15 +329,13 @@ export default function HomeScreen() {
       let isMounted = true;
       const fetchAddresses = async () => {
         try {
-          const sessionStr = await AsyncStorage.getItem("puntgo_user_session");
-          if (!sessionStr) return;
-          const session = JSON.parse(sessionStr);
-          if (!session.id) return;
-          
+          const profile = await getCurrentUser();
+          if (!profile) return;
+
           const { data, error } = await supabase
             .from("saved_addresses")
             .select("*")
-            .eq("user_id", session.id)
+            .eq("user_id", profile.id)
             .order("is_default", { ascending: false })
             .order("created_at", { ascending: true });
             

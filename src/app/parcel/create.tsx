@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter, Stack } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '@/lib/supabase';
+import { getCurrentUser } from "@/lib/getCurrentUser";
 import { PACKAGE_TYPES, PACKAGE_SIZES, PackageType, PackageSize } from '@/lib/parcelPricing';
 
 // ─── Step Indicator ──────────────────────────────────────────────────────
@@ -105,13 +106,12 @@ export default function CreateParcelScreen() {
     if (savedAddresses.length > 0 || loadingAddresses) return;
     setLoadingAddresses(true);
     try {
-      const sessionStr = await AsyncStorage.getItem('puntgo_user_session');
-      if (!sessionStr) return;
-      const session = JSON.parse(sessionStr);
+      const profile = await getCurrentUser();
+      if (!profile) return;
       const { data } = await supabase
         .from('saved_addresses')
         .select('*')
-        .eq('user_id', session.id)
+        .eq('user_id', profile.id)
         .order('is_default', { ascending: false });
       if (data) setSavedAddresses(data);
     } catch { }

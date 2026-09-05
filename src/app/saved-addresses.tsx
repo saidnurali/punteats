@@ -19,6 +19,7 @@ import { useRouter } from "expo-router";
 import Animated, { FadeInDown, FadeIn } from "react-native-reanimated";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "@/lib/supabase";
+import { getCurrentUser } from "@/lib/getCurrentUser";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type AddressLabel = "Home" | "Office" | "Other";
@@ -154,11 +155,8 @@ export default function SavedAddressesScreen() {
 
   // ── Get User Session ─────────────────────────────────────────────────────
   useEffect(() => {
-    AsyncStorage.getItem("puntgo_user_session").then(raw => {
-      if (raw) {
-        const s = JSON.parse(raw);
-        setUserId(s.id ?? null);
-      }
+    getCurrentUser().then(profile => {
+      setUserId(profile?.id ?? null);
     });
   }, []);
 

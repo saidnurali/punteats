@@ -15,6 +15,7 @@ import { useRouter, Stack, useFocusEffect } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { getCustomerParcels, ParcelOrder, PARCEL_STATUS_LABELS, getStatusColor } from '@/lib/parcelService';
+import { getCurrentUser } from "@/lib/getCurrentUser";
 
 const GREEN = '#1B7D3C';
 
@@ -87,12 +88,10 @@ export default function ParcelHistoryScreen() {
       if (isRefresh) setRefreshing(true); else setLoading(true);
       setError(null);
 
-      const sessionStr = await AsyncStorage.getItem('puntgo_user_session');
-      if (!sessionStr) throw new Error('Not logged in.');
-      const session = JSON.parse(sessionStr);
-      if (!session?.id) throw new Error('Invalid session.');
+      const profile = await getCurrentUser();
+      if (!profile) throw new Error('Not logged in.');
 
-      const data = await getCustomerParcels(session.id);
+      const data = await getCustomerParcels(profile.id);
       setParcels(data);
     } catch (err: any) {
       setError(err?.message || 'Failed to load parcel history.');

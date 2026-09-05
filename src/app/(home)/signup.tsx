@@ -37,45 +37,28 @@ export default function SignupScreen() {
     const fullPhone = "+252" + phoneNumber.trim();
     setLoading(true);
     try {
-      // 1. Check if user exists in Supabase
-      const { data: profile, error: fetchError } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('phone_number', fullPhone)
-        .single();
+      // Note: there is no client-side "does this phone already exist"
+      // check here anymore — under RLS, an unauthenticated client can't
+      // reliably read the profiles table, so that check can only be done
+      // server-side. verify-otp already finds-or-creates the profile, so
+      // re-running signup for an existing number just logs that person
+      // in, which is safe.
 
-      if (fetchError && fetchError.code !== 'PGRST116') {
-        throw fetchError;
-      }
-
-      if (profile) {
-        Alert.alert(
-          "Number Registered", 
-          "This number is already registered. Please Log In.",
-          [
-            { text: "Cancel", style: "cancel" },
-            { text: "Log In", onPress: () => router.push("/(home)/login") }
-          ]
-        );
-        return;
-      }
-
-      // If PGRST116 (0 rows), we proceed to send OTP!
-      const otp = Math.floor(1000 + Math.random() * 9000).toString();
-      
-      const { data, error } = await supabase.functions.invoke('send-whatsapp-otp', {
-        body: { phone: fullPhone, otp }
+      // The OTP itself is generated, hashed, and stored entirely
+      // server-side by send-otp — the client never sees it, and there is
+      // no dev-mode bypass code of any kind.
+      const { data, error } = await supabase.functions.invoke('send-otp', {
+        body: { phone: fullPhone }
       });
 
       if (error) {
-        console.warn("Functions Invocation Error:", error);
-        Alert.alert("Dev Mode", "WhatsApp OTP failed. Proceeding anyway. Use code: 0000 to verify.");
-      } else if (data && data.success === false) {
-        console.warn("Meta API Error:", data.error);
-        Alert.alert("Dev Mode", "WhatsApp delivery failed. Proceeding anyway. Use code: 0000 to verify.");
+        throw new Error("Server error sending WhatsApp code. Please try again.");
+      }
+      if (data && data.success === false) {
+        throw new Error(data.error || "WhatsApp delivery failed. Please try again.");
       }
 
-      router.push(`/(home)/verify-otp?phone=${encodeURIComponent(fullPhone)}&sentOtp=${otp}&full_name=${encodeURIComponent(fullName.trim())}`);
+      router.push(`/(home)/verify-otp?phone=${encodeURIComponent(fullPhone)}&full_name=${encodeURIComponent(fullName.trim())}`);
     } catch (err: any) {
       console.error(err);
       Alert.alert("Error", err.message || "Something went wrong verifying your account status.");
