@@ -89,6 +89,10 @@ const HeroCarousel = () => {
   ], [t]);
 
   React.useEffect(() => {
+    // Auto-scroll is pointless (and wastes a running timer) when there's
+    // only one slide — this array is currently hardcoded to a single
+    // entry, so skip starting the interval entirely in that case.
+    if (HERO_SLIDES.length <= 1) return;
     const timer = setInterval(() => {
       if (isDragging.current) return;
       const nextSlide = (activeSlideRef.current + 1) % HERO_SLIDES.length;
@@ -529,7 +533,11 @@ export default function HomeScreen() {
 
       {/* ── Dual Service Cards ── */}
       <Animated.View style={styles.cardsRow}>
-        <TouchableOpacity style={[styles.serviceCard, styles.foodCard]} activeOpacity={0.7}>
+        <TouchableOpacity
+          style={[styles.serviceCard, styles.foodCard]}
+          activeOpacity={0.7}
+          onPress={() => router.push('/categories')}
+        >
           <View style={styles.cardTextContent}>
             <Text style={styles.cardTitle}>{t("food_service").replace(' ', '\n')}</Text>
             <Text style={styles.cardSubtitle}>{t("order_your_favorite")}</Text>
@@ -638,7 +646,17 @@ export default function HomeScreen() {
           <Text style={styles.promoTitle}>{t("get_20_off")}</Text>
           <Text style={styles.promoSub}>{t("on_first_order")}</Text>
         </View>
-        <TouchableOpacity style={styles.promoBtn} activeOpacity={0.7}>
+        <TouchableOpacity
+          style={styles.promoBtn}
+          activeOpacity={0.7}
+          onPress={() => router.push('/categories')}
+        >
+          {/* NOTE: this banner promises "20% off first order" but there is
+              no discount/coupon system anywhere in the app that actually
+              applies it — this button now navigates somewhere useful, but
+              the discount itself still isn't real. Needs a real promo
+              system (see earlier audit item on coupon codes) before this
+              claim is honest. */}
           <Text style={styles.promoBtnText}>{t("order_now")}</Text>
           <View style={styles.promoArrow}>
             <Ionicons name="arrow-forward" size={13} color="#1B7D3C" />

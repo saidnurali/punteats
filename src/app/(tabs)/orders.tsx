@@ -37,6 +37,15 @@ const OrderCard = React.memo(({ order, onPress, onReorder }: { order: any, onPre
   else if (isPreparing) { badgeBg = "#DBEAFE"; badgeColor = "#2563EB"; }
 
   const { t } = useLanguage();
+
+  // "out for delivery" -> "Out For Delivery" — the raw DB status string
+  // was being rendered directly, so casing depended on however it was
+  // stored rather than being consistent for the user.
+  const displayStatus = (order.status || "")
+    .split(" ")
+    .map((w: string) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(" ");
+
   return (
     <TouchableOpacity style={styles.orderCard} onPress={onPress} activeOpacity={0.7}>
       <View style={styles.cardHeader}>
@@ -50,7 +59,7 @@ const OrderCard = React.memo(({ order, onPress, onReorder }: { order: any, onPre
           </View>
         </View>
         <View style={[styles.statusBadge, { backgroundColor: badgeBg }]}>
-          <Text style={[styles.statusText, { color: badgeColor }]}>{order.status}</Text>
+          <Text style={[styles.statusText, { color: badgeColor }]}>{displayStatus}</Text>
         </View>
       </View>
 
